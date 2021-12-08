@@ -124,7 +124,7 @@ void CG_SetInitialSnapshot( snapshot_t *snap )
 	}
 
 	// Need this check because the initial weapon for spec isn't always WP_NONE
-	if ( snap->ps.persistant[ PERS_TEAM ] == TEAM_NONE )
+	if ( CG_MyTeam() == TEAM_NONE )
 	{
 		Rocket_ShowHud( WP_NONE );
 	}
@@ -200,7 +200,7 @@ static void CG_TransitionSnapshot()
 	// if we are not doing client side movement prediction for any
 	// reason, then the client events and view changes will be issued now
 	if (cg.demoPlayback || (cg.snap->ps.pm_flags & PMF_FOLLOW) ||
-			cg_nopredict.integer || cg.pmoveParams.synchronous) {
+			cg_nopredict.Get() || cg.pmoveParams.synchronous) {
 		CG_TransitionPlayerState(ps, ops);
 	}
 
@@ -210,7 +210,7 @@ static void CG_TransitionSnapshot()
 	}
 
 	if (ops->stats[STAT_ITEMS] != ps->stats[STAT_ITEMS]) {
-		CG_OnPlayerUpgradeChange();
+		CG_Rocket_UpdateArmouryMenu();
 	}
 }
 

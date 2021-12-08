@@ -133,82 +133,6 @@ static void CG_Rocket_DFServerLabel( int handle, const char *data )
 	Rocket_DataFormatterFormattedData( handle, *data ? ++str : "&nbsp;", false );
 }
 
-static void CG_Rocket_DFCMArmouryBuyWeapon( int handle, const char *data )
-{
-	weapon_t weapon = (weapon_t) atoi( Info_ValueForKey( data, "1" ) );
-	const char *Class = "";
-	const char *Icon = "";
-	const char *action = "";
-	playerState_t *ps = &cg.snap->ps;
-	int credits = ps->persistant[ PERS_CREDIT ];
-	weapon_t currentweapon = BG_PrimaryWeapon( ps->stats );
-	credits += BG_Weapon( currentweapon )->price;
-
-	if( BG_InventoryContainsWeapon( weapon, cg.predictedPlayerState.stats ) ){
-		Class = "active";
-		action =  va( "onClick='Cmd.exec(\"sell %s\")'", BG_Weapon( weapon )->name );
-		//Check mark icon. UTF-8 encoding of \uf00c
-		Icon = "<icon class=\"current\">\xEF\x80\x8C</icon>";
-	}
-	else if ( !BG_WeaponUnlocked( weapon ) || BG_WeaponDisabled( weapon ) )
-	{
-		Class = "locked";
-		//Padlock icon. UTF-8 encoding of \uf023
-		Icon = "<icon>\xEF\x80\xA3</icon>";
-	}
-
-	else if(BG_Weapon( weapon )->price > credits){
-
-		Class = "expensive";
-		//$1 bill icon. UTF-8 encoding of \uf0d6
-		Icon = "<icon>\xEF\x83\x96</icon>";
-	}
-	else
-	{
-		Class = "available";
-		action =  va( "onClick='Cmd.exec(\"buy +%s\")'", BG_Weapon( weapon )->name );
-	}
-
-	Rocket_DataFormatterFormattedData( handle, va( "<button class='armourybuy %s' onMouseover='Events.pushevent(\"setDS armouryBuyList weapons %s\", event)' %s>%s<img src='/%s'/></button>", Class, Info_ValueForKey( data, "2" ), action, Icon, CG_GetShaderNameFromHandle( cg_weapons[ weapon ].ammoIcon )), false );
-}
-
-static void CG_Rocket_DFCMArmouryBuyUpgrade( int handle, const char *data )
-{
-	upgrade_t upgrade = (upgrade_t) atoi( Info_ValueForKey( data, "1" ) );
-	const char *Class = "";
-	const char *Icon = "";
-	const char *action = "";
-	playerState_t *ps = &cg.snap->ps;
-	int credits = ps->persistant[ PERS_CREDIT ];
-
-	if( BG_InventoryContainsUpgrade( upgrade, cg.predictedPlayerState.stats ) ){
-		Class = "active";
-		action =  va( "onClick='Cmd.exec(\"sell %s\")'", BG_Upgrade( upgrade )->name );
-		//Check mark icon. UTF-8 encoding of \uf00c
-		Icon = "<icon class=\"current\">\xEF\x80\x8C</icon>";
-	}
-
-	else if ( !BG_UpgradeUnlocked( upgrade ) || BG_UpgradeDisabled( upgrade ) )
-	{
-		Class = "locked";
-		//Padlock icon. UTF-8 encoding of \uf023
-		Icon = "<icon>\xEF\x80\xA3</icon>";
-	}
-	else if(BG_Upgrade( upgrade )->price > credits){
-
-		Class = "expensive";
-		//$1 bill icon. UTF-8 encoding of \uf0d6
-		Icon = "<icon>\xEF\x83\x96</icon>";
-	}
-	else
-	{
-		Class = "available";
-		action =  va( "onClick='Cmd.exec(\"buy +%s\")'", BG_Upgrade( upgrade )->name );
-	}
-
-	Rocket_DataFormatterFormattedData( handle, va( "<button class='armourybuy %s' onMouseover='Events.pushevent(\"setDS armouryBuyList upgrades %s\", event)' %s>%s<img src='/%s'/></button>", Class, Info_ValueForKey( data, "2" ), action, Icon, CG_GetShaderNameFromHandle( cg_upgrades[ upgrade ].upgradeIcon)), false );
-}
-
 static void CG_Rocket_DFGWeaponDamage( int handle, const char *data )
 {
 	weapon_t weapon = (weapon_t) atoi( Info_ValueForKey( data, "1" ) );
@@ -317,129 +241,18 @@ static void CG_Rocket_DFGearOrReady( int handle, const char *data )
 		score_t *s = ScoreFromClientNum( clientNum );
 		const char *rml = "";
 
-		if ( s && ( s->team == cg.predictedPlayerState.persistant[ PERS_TEAM ] || cg.predictedPlayerState.persistant[ PERS_TEAM ] == TEAM_NONE ) && s->weapon != WP_NONE )
+		if ( s && ( s->team == CG_MyTeam() || CG_MyTeam() == TEAM_NONE ) && s->weapon != WP_NONE )
 		{
 			rml = va( "<img src='/%s'/>", CG_GetShaderNameFromHandle( cg_weapons[ s->weapon ].weaponIcon ) );
 		}
 
-		if ( s && ( s->team == cg.predictedPlayerState.persistant[ PERS_TEAM ] || cg.predictedPlayerState.persistant[ PERS_TEAM ] == TEAM_NONE ) && s->team == TEAM_HUMANS && s->upgrade != UP_NONE )
+		if ( s && ( s->team == CG_MyTeam() || CG_MyTeam() == TEAM_NONE ) && s->team == TEAM_HUMANS && s->upgrade != UP_NONE )
 		{
 			rml = va( "%s<img src='/%s'/>", rml, CG_GetShaderNameFromHandle( cg_upgrades[ s->upgrade ].upgradeIcon ) );
 		}
 
 		Rocket_DataFormatterFormattedData( handle, rml, false );
 	}
-}
-
-static void BuildMenuHelper( int handle, const char *data, team_t team )
-{
-	buildable_t buildable = ( buildable_t ) atoi( Info_ValueForKey( data, "1" ) );
-
-	const char *Class = "";
-	const char *Icon = "";
-	const char *action = "";
-
-	int spentBudget     = cg.snap->ps.persistant[ PERS_SPENTBUDGET ];
-	int markedBudget    = cg.snap->ps.persistant[ PERS_MARKEDBUDGET ];
-	int totalBudet      = cg.snap->ps.persistant[ PERS_TOTALBUDGET ];
-	int queuedBudget    = cg.snap->ps.persistant[ PERS_QUEUEDBUDGET ];
-	int availableBudget = std::max( 0, totalBudet - ((spentBudget - markedBudget) + queuedBudget));
-
-	if ( BG_BuildableDisabled( buildable ) || !BG_BuildableUnlocked( buildable ) )
-	{
-		Class = "locked";
-		Icon = "<icon>\xEF\x80\xA3</icon>"; // Padlock icon. UTF-8 encoding of \uf023.
-	}
-	else if ( BG_Buildable( buildable )->buildPoints > availableBudget )
-	{
-		Class = "expensive";
-		Icon = "<icon>\xEF\x83\x96</icon>"; // $1 bill icon. UTF-8 encoding of \uf0d6.
-	}
-	else
-	{
-		Class = "available";
-		action = va(
-			"onClick='Cmd.exec(\"build %s\") Events.pushevent(\"hide %s\", event)'",
-			BG_Buildable( buildable )->name,
-			rocketInfo.menu[ team == TEAM_ALIENS ? ROCKETMENU_ALIENBUILD : ROCKETMENU_HUMANBUILD ].id
-		);
-	}
-
-	Rocket_DataFormatterFormattedData( handle, va(
-		"<button class='%s' onMouseover='Events.pushevent(\"setDS %sBuildList default %s\", event)' %s>%s<img src='/%s'/></button>",
-		Class, team == TEAM_ALIENS ? "alien" : "human", Info_ValueForKey( data, "2" ), action, Icon,
-		CG_GetShaderNameFromHandle( cg_buildables[ buildable ].buildableIcon )
-	), false );
-}
-
-static void CG_Rocket_DFCMAlienBuildables( int handle, const char *data )
-{
-	BuildMenuHelper( handle, data, TEAM_ALIENS );
-}
-
-static void CG_Rocket_DFCMHumanBuildables( int handle, const char *data )
-{
-	BuildMenuHelper( handle, data, TEAM_HUMANS );
-}
-
-static void CG_Rocket_DFCMAlienEvolve( int handle, const char *data )
-{
-	class_t alienClass = (class_t) atoi( Info_ValueForKey( data, "1" ) );
-	const char *Class = "";
-	const char *Icon = "";
-	const char *action = "";
-	int cost = BG_ClassCanEvolveFromTo( cg.predictedPlayerState.stats[ STAT_CLASS ], alienClass, cg.predictedPlayerState.persistant[ PERS_CREDIT ] );
-
-	if ( ( alienClass == PCL_ALIEN_BUILDER0 && ( BG_ClassUnlocked( PCL_ALIEN_BUILDER0_UPG ) && !BG_ClassDisabled( PCL_ALIEN_BUILDER0_UPG ) ) )||
-			 ( alienClass == PCL_ALIEN_BUILDER0_UPG && ( !BG_ClassUnlocked( PCL_ALIEN_BUILDER0_UPG ) ) ) )
-	{
-		Rocket_DataFormatterFormattedData( handle, "", false );
-		return;
-	}
-
-	if( cg.predictedPlayerState.stats[ STAT_CLASS ] == alienClass )
-	{
-		Class = "active";
-		//Check mark icon. UTF-8 encoding of \uf00c
-		Icon = "<icon class=\"current\">\xEF\x80\x8C</icon>";
-	}
-	else if ( !BG_ClassUnlocked( alienClass ) || BG_ClassDisabled( alienClass ) )
-	{
-		Class = "locked";
-		//Padlock icon. UTF-8 encoding of \uf023
-		Icon = "<icon>\xEF\x80\xA3</icon>";
-	}
-	else if ( cost == CANT_EVOLVE )
-	{
-
-		Class = "expensive";
-		//$1 bill icon. UTF-8 encoding of \uf0d6
-		Icon = "<icon>\xEF\x83\x96</icon>";
-	}
-	else
-	{
-		Class = "available";
-		action =  va( "onClick='Cmd.exec(\"class %s\") Events.pushevent(\"hide %s\", event)'", BG_Class( alienClass )->name, rocketInfo.menu[ ROCKETMENU_ALIENEVOLVE ].id );
-	}
-
-	Rocket_DataFormatterFormattedData( handle, va( "<button class='alienevo %s' alienclass='%s' %s>%s<img src='/%s'/></button>", Class, Info_ValueForKey( data, "2" ), action, Icon, CG_GetShaderNameFromHandle( cg_classes[ alienClass ].classIcon )), false );
-}
-
-static void CG_Rocket_DFCMBeacons( int handle, const char *data )
-{
-	beaconType_t bct = (beaconType_t)atoi( Info_ValueForKey( data, "1" ) );
-	const beaconAttributes_t *ba;
-	const char *icon, *action;
-
-	ba = BG_Beacon( bct );
-
-	if( !ba )
-		return;
-
-	icon = CG_GetShaderNameFromHandle( ba->icon[ 0 ][ 0 ] );
-	action = va( "onClick='Cmd.exec(\"beacon %s\") Events.pushevent(\"hide ingame_beaconmenu\", event)'", ba->name );
-
-	Rocket_DataFormatterFormattedData( handle, va( "<button class='beacons' onMouseover='Events.pushevent(\"setDS beacons default %s\", event)' %s><img src='/%s'/></button>", Info_ValueForKey( data, "2" ), action, icon ), false );
 }
 
 struct dataFormatterCmd_t
@@ -451,12 +264,6 @@ struct dataFormatterCmd_t
 static const dataFormatterCmd_t dataFormatterCmdList[] =
 {
 	{ "ClassName", &CG_Rocket_DFClassName },
-	{ "CMAlienBuildables", &CG_Rocket_DFCMAlienBuildables },
-	{ "CMAlienEvolve", &CG_Rocket_DFCMAlienEvolve },
-	{ "CMArmouryBuyUpgrades", &CG_Rocket_DFCMArmouryBuyUpgrade },
-	{ "CMArmouryBuyWeapons", &CG_Rocket_DFCMArmouryBuyWeapon },
-	{ "CMBeacons", &CG_Rocket_DFCMBeacons },
-	{ "CMHumanBuildables", &CG_Rocket_DFCMHumanBuildables },
 	{ "GearOrReady", &CG_Rocket_DFGearOrReady },
 	{ "GWeaponDamage", &CG_Rocket_DFGWeaponDamage },
 	{ "GWeaponRange", &CG_Rocket_DFGWeaponRange },

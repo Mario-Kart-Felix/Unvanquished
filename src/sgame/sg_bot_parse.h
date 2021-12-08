@@ -23,8 +23,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 
-#ifndef __BOT_PARSE_HEADER
-#define __BOT_PARSE_HEADER
+#ifndef BOT_PARSE_H_
+#define BOT_PARSE_H_
 
 #include "shared/parse.h"
 #include "sg_bot_ai.h"
@@ -56,12 +56,12 @@ struct pc_token_stripped_t
 	int   line;
 };
 
-typedef struct pc_token_list_s
+struct pc_token_list
 {
-	pc_token_stripped_t    token;
-	struct pc_token_list_s *prev;
-	struct pc_token_list_s *next;
-} pc_token_list;
+	pc_token_stripped_t token;
+	pc_token_list *prev;
+	pc_token_list *next;
+};
 
 struct AITreeList_t
 {

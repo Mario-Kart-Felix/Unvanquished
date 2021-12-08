@@ -28,7 +28,6 @@ along with Unvanquished Source Code.  If not, see <http://www.gnu.org/licenses/>
 // engine headers
 #include "engine/qcommon/q_shared.h"
 #include "engine/server/sg_api.h"
-#include "engine/botlib/bot_types.h"
 
 // shared gamelogic (bg) headers
 #include "shared/bg_public.h"
@@ -37,11 +36,11 @@ along with Unvanquished Source Code.  If not, see <http://www.gnu.org/licenses/>
 #include "sg_definitions.h"
 
 // type definitions
-#include "sg_typedef.h"
+#include "botlib/bot_types.h"
 
 // topic function headers and definitions
 #include "sg_admin.h"
-#include "sg_bot.h"
+#include "sg_bot_public.h"
 #include "sg_entities.h"
 
 // struct definitions

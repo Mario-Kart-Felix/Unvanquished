@@ -38,7 +38,7 @@ Keybinding command
 */
 static void CG_SizeUp_f()
 {
-	trap_Cvar_Set( "cg_viewsize", va( "%i", std::min( cg_viewsize.integer + 10, 100 ) ) );
+	cg_viewsize.Set( std::min( cg_viewsize.Get() + 10, 100 ) );
 }
 
 /*
@@ -50,7 +50,7 @@ Keybinding command
 */
 static void CG_SizeDown_f()
 {
-	trap_Cvar_Set( "cg_viewsize", va( "%i", std::max( cg_viewsize.integer - 10, 30 ) ) );
+	cg_viewsize.Set( std::max( cg_viewsize.Get() - 10, 30 ) );
 }
 
 /*
@@ -261,7 +261,7 @@ static void CG_CompleteName()
 	{
 		char name[ MAX_NAME_LENGTH ];
 		ci = &cgs.clientinfo[ i ];
-		strcpy( name, ci->name );
+		Q_strncpyz( name, ci->name, sizeof name );
 
 		if ( !ci->infoValid )
 		{
@@ -442,6 +442,7 @@ static const struct
 	{ "+scores",           CG_ShowScores_f,        0                },
 	{ "-scores",           CG_HideScores_f,        0                },
 	{ "a",                0,                       0                },
+	{ "addcon",           0,                       0                },
 	{ "asay",             0,                       0                },
 	{ "beacon",           0,                       CG_CompleteBeacon },
 	{ "beaconMenu",       CG_BeaconMenu_f,         0                },
@@ -456,6 +457,7 @@ static const struct
 	{ "destroy",          0,                       0                },
 	{ "destroyTestPS",    CG_DestroyTestPS_f,      0                },
 	{ "destroyTestTS",    CG_DestroyTestTS_f,      0                },
+	{ "devteam",          0,                       0                },
 	{ "follow",           0,                       CG_CompleteName  },
 	{ "follownext",       0,                       0                },
 	{ "followprev",       0,                       0                },
@@ -480,6 +482,8 @@ static const struct
 	{ "message_team",     CG_MessageTeam_f,        0                },
 	{ "me_team",          0,                       0                },
 	{ "mt",               0,                       CG_CompleteName  },
+	{ "navedit",          0,                       0                },
+	{ "navtest",          0,                       0                },
 	{ "nextframe",        CG_TestModelNextFrame_f, 0                },
 	{ "nextskin",         CG_TestModelNextSkin_f,  0                },
 	{ "noclip",           0,                       0                },
@@ -509,6 +513,7 @@ static const struct
 	{ "testTS",           CG_TestTS_f,             0                },
 	{ "toggleMenu",       CG_ToggleMenu_f,         0                },
 	{ "unignore",         0,                       CG_CompleteName  },
+	{ "updatelanguage",   Trans_UpdateLanguage_f,  0                },
 	{ "viewpos",          CG_Viewpos_f,            0                },
 	{ "vote",             0,                       0                },
 	{ "vsay",             0,                       CG_CompleteVsay  },
@@ -579,9 +584,10 @@ void CG_InitConsoleCommands()
 		trap_AddCommand( commands[ i ].cmd );
 	}
 
+	// Defined in src/engine/qcommon/q_shared.h, see BUTTON_ATTACK etc.
 	trap_RegisterButtonCommands(
-	    // 0      12       3     45      6        78       9ABCDEF      <- bit nos.
-	      "attack,,useitem,taunt,,sprint,activate,,attack2,,,,,,rally"
+	    // 0      123     45      6        78       9       ABCD           E      <- bit nos.
+	      "attack,,,taunt,,sprint,activate,,attack2,attack3,,,,deconstruct,rally"
 	    );
 }
 

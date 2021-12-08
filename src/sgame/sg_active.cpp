@@ -30,6 +30,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 bool ClientInactivityTimer( gentity_t *ent, bool active );
 
+static Cvar::Cvar<float> g_devolveReturnRate(
+	"g_devolveReturnRate", "Evolution points per second returned after devolving", Cvar::NONE, 0.4);
+
 /*
 ===============
 P_DamageFeedback
@@ -274,7 +277,7 @@ static void ClientShove( gentity_t *ent, gentity_t *victim )
 		return;
 	}
 
-	force = g_shove.value * entMass / vicMass;
+	force = g_shove.Get() * entMass / vicMass;
 
 	if ( force < 0 )
 	{
@@ -549,7 +552,7 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd )
 
 	// Check to see if we are in the spawn queue
 	// Also, do some other checks and updates which players need while spectating
-	if ( team == TEAM_ALIENS || team == TEAM_HUMANS )
+	if ( G_IsPlayableTeam( team ) )
 	{
 		client->ps.persistant[ PERS_UNLOCKABLES ] = BG_UnlockablesMask( client->pers.team );
 		queued = G_SearchSpawnQueue( &level.team[ team ].spawnQueue, ent - g_entities );
@@ -573,7 +576,7 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd )
 		}
 
 		//be sure that only valid team "numbers" can be used.
-		ASSERT(team == TEAM_ALIENS || team == TEAM_HUMANS);
+		ASSERT( G_IsPlayableTeam( team ) );
 		G_RemoveFromSpawnQueue( &level.team[ team ].spawnQueue, client->ps.clientNum );
 
 		client->pers.classSelection = PCL_NONE;
@@ -636,6 +639,7 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd )
 		client->ps.stats[ STAT_BUILDABLE ] = BA_NONE;
 		client->ps.stats[ STAT_CLASS ] = PCL_NONE;
 		client->ps.weapon = WP_NONE;
+		client->ps.weaponCharge = 0;
 
 		// Set up for pmove
 		memset( &pm, 0, sizeof( pm ) );
@@ -659,7 +663,7 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd )
 		if ( client->ps.pm_flags & PMF_QUEUED )
 		{
 			/* team must exist, or there will be a sigsegv */
-			ASSERT(team == TEAM_HUMANS || team == TEAM_ALIENS);
+			ASSERT( G_IsPlayableTeam( team ) );
 			client->ps.persistant[ PERS_SPAWNQUEUE ] = level.team[ team ].numSpawns;
 			client->ps.persistant[ PERS_SPAWNQUEUE ] |= G_GetPosInSpawnQueue( &level.team[ team ].spawnQueue,
 			                                                                  client->ps.clientNum ) << 8;
@@ -677,8 +681,10 @@ Returns false if the client is dropped
 bool ClientInactivityTimer( gentity_t *ent, bool active )
 {
 	gclient_t *client = ent->client;
+	int inactivityTime = atoi(g_inactivity.Get().c_str());
+	bool putSpec = strchr(g_inactivity.Get().c_str(), 's');
 
-	if ( !g_inactivity.integer )
+	if ( inactivityTime <= 0 )
 	{
 		// give everyone some time, so if the operator sets g_inactivity during
 		// gameplay, everyone isn't kicked
@@ -691,7 +697,7 @@ bool ClientInactivityTimer( gentity_t *ent, bool active )
 	          client->pers.cmd.upmove ||
 	          usercmdButtonPressed( client->pers.cmd.buttons, BUTTON_ATTACK ) )
 	{
-		client->inactivityTime = level.time + g_inactivity.integer * 1000;
+		client->inactivityTime = level.time + inactivityTime * 1000;
 		client->inactivityWarning = false;
 	}
 	else if ( !client->pers.localClient )
@@ -699,7 +705,7 @@ bool ClientInactivityTimer( gentity_t *ent, bool active )
 		if ( level.time > client->inactivityTime &&
 		     !G_admin_permission( ent, ADMF_ACTIVITY ) )
 		{
-			if( strchr( g_inactivity.string, 's' ) )
+			if( putSpec )
 			{
 				trap_SendServerCommand( -1,
 				                        va( "print_tr %s %s %s", QQ( N_("$1$^* moved from $2$ to spectators due to inactivity\n") ),
@@ -720,7 +726,7 @@ bool ClientInactivityTimer( gentity_t *ent, bool active )
 		{
 			client->inactivityWarning = true;
 			trap_SendServerCommand( client - level.clients,
-			                        va( "cp_tr %s", strchr( g_inactivity.string, 's' ) ? N_("\"Ten seconds until inactivity spectate!\n\"") : N_("\"Ten seconds until inactivity drop!\n\"") ) );
+			                        va( "cp_tr %s", putSpec ? N_("\"Ten seconds until inactivity spectate!\n\"") : N_("\"Ten seconds until inactivity drop!\n\"") ) );
 		}
 	}
 
@@ -817,7 +823,7 @@ static void G_ReplenishHumanHealth( gentity_t *self )
 static void BeaconAutoTag( gentity_t *self, int timePassed )
 {
 	gentity_t *traceEnt, *target;
-	gclient_s *client;
+	gclient_t *client;
 	team_t    team;
 	vec3_t viewOrigin, forward, end;
 
@@ -1051,8 +1057,8 @@ void ClientTimerActions( gentity_t *ent, int msec )
 
 		client->pers.aliveSeconds++;
 
-		if ( g_freeFundPeriod.integer > 0 &&
-		     client->pers.aliveSeconds % g_freeFundPeriod.integer == 0 )
+		if ( g_freeFundPeriod.Get() > 0 &&
+		     client->pers.aliveSeconds % g_freeFundPeriod.Get() == 0 )
 		{
 			// Give clients some credit periodically
 			if ( client->pers.team == TEAM_ALIENS )
@@ -1064,6 +1070,11 @@ void ClientTimerActions( gentity_t *ent, int msec )
 				G_AddCreditToClient( client, PLAYER_BASE_VALUE, true );
 			}
 		}
+
+		int devolveReturnedCredits = std::min(
+			static_cast<int>(g_devolveReturnRate.Get() * CREDITS_PER_EVO), client->pers.devolveReturningCredits );
+		client->pers.devolveReturningCredits -= devolveReturnedCredits;
+		G_AddCreditToClient( client, devolveReturnedCredits, true );
 	}
 
 	while ( client->time10000 >= 10000 )
@@ -1099,8 +1110,7 @@ void ClientIntermissionThink( gclient_t *client )
 	usercmdCopyButtons( client->oldbuttons, client->buttons );
 	usercmdCopyButtons( client->buttons, client->pers.cmd.buttons );
 
-	if ( ( usercmdButtonPressed( client->buttons, BUTTON_ATTACK ) ||
-	       usercmdButtonPressed( client->buttons, BUTTON_USE_HOLDABLE ) ) &&
+	if ( usercmdButtonPressed( client->buttons, BUTTON_ATTACK ) &&
 	     usercmdButtonsDiffer( client->oldbuttons, client->buttons ) )
 	{
 		client->readyToExit = 1;
@@ -1184,6 +1194,18 @@ void ClientEvents( gentity_t *ent, int oldEventSequence )
 				G_FireWeapon( ent, ( weapon_t )ent->s.weapon, WPM_TERTIARY );
 				break;
 
+			case EV_FIRE_DECONSTRUCT:
+				G_FireWeapon( ent, ( weapon_t )ent->s.weapon, WPM_DECONSTRUCT );
+				break;
+
+			case EV_FIRE_DECONSTRUCT_LONG:
+				G_FireWeapon( ent, ( weapon_t )ent->s.weapon, WPM_DECONSTRUCT_LONG );
+				break;
+
+			case EV_DECONSTRUCT_SELECT_TARGET:
+				G_FireWeapon( ent, ( weapon_t )ent->s.weapon, WPM_DECONSTRUCT_SELECT_TARGET );
+				break;
+
 			case EV_NOAMMO:
 				break;
 
@@ -1245,7 +1267,7 @@ void G_UnlaggedStore()
 	gentity_t  *ent;
 	unlagged_t *save;
 
-	if ( !g_unlagged.integer )
+	if ( !g_unlagged.Get() )
 	{
 		return;
 	}
@@ -1317,7 +1339,7 @@ void G_UnlaggedCalc( int time, gentity_t *rewindEnt )
 	int       frameMsec = 0;
 	float     lerp = 0.5f;
 
-	if ( !g_unlagged.integer )
+	if ( !g_unlagged.Get() )
 	{
 		return;
 	}
@@ -1434,7 +1456,7 @@ void G_UnlaggedOff()
 	int       i = 0;
 	gentity_t *ent;
 
-	if ( !g_unlagged.integer )
+	if ( !g_unlagged.Get() )
 	{
 		return;
 	}
@@ -1476,7 +1498,7 @@ void G_UnlaggedOn( gentity_t *attacker, vec3_t muzzle, float range )
 	gentity_t  *ent;
 	unlagged_t *calc;
 
-	if ( !g_unlagged.integer )
+	if ( !g_unlagged.Get() )
 	{
 		return;
 	}
@@ -1566,7 +1588,7 @@ static void G_UnlaggedDetectCollisions( gentity_t *ent )
 	float      r1, r2;
 	float      range;
 
-	if ( !g_unlagged.integer )
+	if ( !g_unlagged.Get() )
 	{
 		return;
 	}
@@ -1730,14 +1752,14 @@ static void G_ReplenishAlienHealth( gentity_t *self )
 		}
 		else
 		{
-			if ( g_alienOffCreepRegenHalfLife.value < 1 )
+			if ( g_alienOffCreepRegenHalfLife.Get() < 1 )
 			{
 				modifier = 1.0f;
 			}
 			else
 			{
 				// Exponentially decrease healing rate when not on creep. ln(2) ~= 0.6931472
-				modifier = exp( ( 0.6931472f / ( 1000.0f * g_alienOffCreepRegenHalfLife.value ) ) *
+				modifier = exp( ( 0.6931472f / ( 1000.0f * g_alienOffCreepRegenHalfLife.Get() ) ) *
 				                ( self->healthSourceTime - level.time ) );
 				modifier = std::max( modifier, ALIEN_REGEN_NOCREEP_MIN );
 			}
@@ -1817,13 +1839,11 @@ void ClientThink_real( gentity_t *self )
 	if ( ucmd->serverTime > level.time + 200 )
 	{
 		ucmd->serverTime = level.time + 200;
-//    Log::Debug("serverTime <<<<<" );
 	}
 
 	if ( ucmd->serverTime < level.time - 1000 )
 	{
 		ucmd->serverTime = level.time - 1000;
-//    Log::Debug("serverTime >>>>>" );
 	}
 
 	msec = ucmd->serverTime - client->ps.commandTime;
@@ -1942,7 +1962,7 @@ void ClientThink_real( gentity_t *self )
 	}
 
 	// copy global gravity to playerstate
-	client->ps.gravity = g_gravity.value;
+	client->ps.gravity = g_gravity.Get();
 
 	G_ReplenishHumanHealth( self );
 
@@ -1980,7 +2000,7 @@ void ClientThink_real( gentity_t *self )
 	}
 	else
 	{
-		client->ps.speed = g_speed.value *
+		client->ps.speed = g_speed.Get() *
 		                   BG_Class( client->ps.stats[ STAT_CLASS ] )->speed;
 	}
 
@@ -2025,7 +2045,7 @@ void ClientThink_real( gentity_t *self )
 
 	pm.trace          = trap_Trace;
 	pm.pointcontents  = trap_PointContents;
-	pm.debugLevel     = g_debugMove.integer;
+	pm.debugLevel     = g_debugMove.Get();
 	pm.noFootsteps    = 0;
 	pm.pmove_fixed    = level.pmoveParams.fixed || client->pers.pmoveFixed;
 	pm.pmove_msec     = level.pmoveParams.msec;
@@ -2049,7 +2069,7 @@ void ClientThink_real( gentity_t *self )
 		self->eventTime = level.time;
 	}
 
-	if ( g_smoothClients.integer )
+	if ( g_smoothClients.Get() )
 	{
 		BG_PlayerStateToEntityStateExtraPolate( &client->ps, &self->s, client->ps.commandTime, true );
 	}
@@ -2064,7 +2084,7 @@ void ClientThink_real( gentity_t *self )
 	switch ( client->ps.weapon )
 	{
 		case WP_ALEVEL0:
-			if ( !G_CheckVenomAttack( self ) )
+			if ( !G_CheckDretchAttack( self ) )
 			{
 				client->ps.weaponstate = WEAPON_READY;
 			}
@@ -2172,7 +2192,7 @@ void ClientThink_real( gentity_t *self )
 		     ( !ent->buildableTeam   || ent->buildableTeam   == client->pers.team ) &&
 		     ( !ent->conditions.team || ent->conditions.team == client->pers.team ) )
 		{
-			if ( g_debugEntities.integer > 1 )
+			if ( g_debugEntities.Get() > 1 )
 			{
 				Log::Debug("Calling entity->use for player facing %s", etos(ent));
 			}
@@ -2186,7 +2206,7 @@ void ClientThink_real( gentity_t *self )
 			{
 				if ( ent && ent->use && ent->buildableTeam == client->pers.team)
 				{
-					if ( g_debugEntities.integer > 1 )
+					if ( g_debugEntities.Get() > 1 )
 					{
 						Log::Debug("Calling entity->use after an area-search for %s", etos(ent));
 					}
@@ -2303,7 +2323,7 @@ void ClientEndFrame( gentity_t *ent )
 	G_SetClientSound( ent );
 
 	// set the latest infor
-	if ( g_smoothClients.integer )
+	if ( g_smoothClients.Get() )
 	{
 		BG_PlayerStateToEntityStateExtraPolate( &ent->client->ps, &ent->s, ent->client->ps.commandTime, true );
 	}

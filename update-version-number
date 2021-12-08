@@ -32,15 +32,5 @@ sedInPlace () {
 # Update Defs.h
 sedInPlace 's|\(#define \+PRODUCT_VERSION *"\)[^"]*"|\1'"${VERSION}"'"|' "${SOURCE_PATH}/daemon/src/common/Defs.h"
 
-# Update download-dpk
-sedInPlace 's|version=.*|version='"${VERSION}"'|' "${SOURCE_PATH}/download-paks"
-chmod +x "${SOURCE_PATH}/download-paks"
-
 # Update Info.plist
 sedInPlace '/<key>CFBundleVersion<\/key>/{N;s|<string>[^<]*</string>|<string>'"${VERSION}"'</string>|}' "${SOURCE_PATH}/macosx/Info.plist"
-
-# Update menu_main.rml
-sedInPlace '/blocklink.*Alpha/s/Alpha \([0-9\.]\+\)/Alpha '"${VERSION_SHORT}"'/' "${SOURCE_PATH}/pkg/unvanquished_src.dpkdir/ui/menu_main.rml"
-
-# Update m# Update menu_main.rml
-sedInPlace '/blocklink.*Alpha/s/Alpha \([0-9\.]\+\)/Alpha '"${VERSION_SHORT}"'/' "${SOURCE_PATH}/pkg/unvanquished_src.dpkdir/ui/menu_ingame.rml"

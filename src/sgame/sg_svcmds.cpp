@@ -380,7 +380,7 @@ static void Svcmd_LayoutLoad_f()
 
 	s = ConcatArgs( 1 );
 	Q_strncpyz( layouts, s, sizeof( layouts ) );
-	trap_Cvar_Set( "g_layouts", layouts );
+	g_layouts.Set(layouts);
 	trap_SendConsoleCommand( "map_restart\n" );
 	level.restarted = true;
 }
@@ -632,7 +632,7 @@ static void Svcmd_PrintQueue_f()
 	trap_Argv( 1, teamName, sizeof( teamName ) );
 
 	team = G_TeamFromString(teamName);
-	if ( TEAM_ALIENS == team || TEAM_HUMANS == team )
+	if ( G_IsPlayableTeam( team ) )
 	{
 		G_PrintSpawnQueue( &level.team[ team ].spawnQueue );
 	}

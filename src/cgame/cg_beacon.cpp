@@ -49,7 +49,8 @@ void CG_LoadBeaconsConfig()
 	vh = cgs.glconfig.vidHeight;
 	base = std::min( vw, vh );
 
-	memset( bc, 0, sizeof( beaconsConfig_t ) );
+	bc->~beaconsConfig_t();
+	new(bc) beaconsConfig_t{};
 
 	bc->hudCenter[ 0 ] = vw / 2;
 	bc->hudCenter[ 1 ] = vh / 2;
@@ -134,7 +135,7 @@ else if( !Q_stricmp( token.string, #x ) ) \
 			if( !PC_Float_Parse( fd, &angle ) )
 				break;
 
-			bc->highlightAngle = cos( angle / 180.0 * M_PI );
+			bc->highlightAngle = cosf( angle / 180.0 * M_PI );
 		}
 		else
 			Log::Warn( "bad keyword \"%s\" in \"%s\"\n", token.string, path );
@@ -146,7 +147,7 @@ else if( !Q_stricmp( token.string, #x ) ) \
 	Parse_FreeSourceHandle( fd  );
 }
 
-#define Distance2(a,b) sqrt(Square((a)[0]-(b)[0])+Square((a)[1]-(b)[1]))
+#define Distance2(a,b) sqrtf(Square((a)[0]-(b)[0])+Square((a)[1]-(b)[1]))
 
 /**
  * @brief Fills cg.beacons with explicit (ET_BEACON entity) beacons.
@@ -507,7 +508,7 @@ static void DrawBeacon( cbeacon_t *b )
 	}
 */
 	// color
-	if( cg.predictedPlayerState.persistant[ PERS_TEAM ] == TEAM_NONE ||
+	if( CG_MyTeam() == TEAM_NONE ||
 	    b->type == BCT_TAG || b->type == BCT_BASE )
 	{
 		switch( b->ownerTeam )
@@ -537,11 +538,8 @@ static void DrawBeacon( cbeacon_t *b )
 		b->color.SetAlpha( 1.0f );
 
 	// calculate HUD size
-	b->size = cgs.bc.hudSize / sqrt( b->dist );
-	if( b->size > cgs.bc.hudMaxSize )
-		b->size = cgs.bc.hudMaxSize;
-	else if ( b->size < cgs.bc.hudMinSize )
-		b->size = cgs.bc.hudMinSize;
+	b->size = Math::Clamp( cgs.bc.hudSize / sqrtf( b->dist ),
+			cgs.bc.hudMinSize, cgs.bc.hudMaxSize );
 	b->size *= b->scale;
 
 	// project onto screen
@@ -601,7 +599,8 @@ static void HandHLBeaconToUI()
 		}
 
 		// name
-		CG_BeaconName( beacon, br->name, sizeof( br->name ) );
+		std::string name = CG_BeaconName( beacon );
+		Q_strncpyz( br->name, name.c_str(), sizeof( br->name ) );
 		showName = true;
 
 		// info
@@ -727,14 +726,13 @@ qhandle_t CG_BeaconDescriptiveIcon( const cbeacon_t *b )
 	}
 }
 
-const char *CG_BeaconName( const cbeacon_t *b, char *out, size_t len )
+std::string CG_BeaconName( const cbeacon_t *b )
 {
-	if( b->type <= BCT_NONE || b->type > NUM_BEACON_TYPES ) {
-		return strncpy( out, "b->type out of range", len );
+	if( b->type <= BCT_NONE || b->type >= NUM_BEACON_TYPES ) {
 		return "b->type out of range";
 	}
 
-	team_t ownTeam    = (team_t)cg.predictedPlayerState.persistant[ PERS_TEAM ];
+	team_t ownTeam    = CG_MyTeam();
 	team_t beaconTeam = TargetTeam( b );
 
 	switch( b->type )
@@ -742,18 +740,18 @@ const char *CG_BeaconName( const cbeacon_t *b, char *out, size_t len )
 		case BCT_TAG:
 			if( b->flags & EF_BC_TAG_PLAYER ) {
 				if ( ownTeam == TEAM_NONE || ownTeam == beaconTeam ) {
-					return strncpy( out, cgs.clientinfo[ b->target ].name, len ); // Player name
+					return cgs.clientinfo[ b->target ].name; // Player name
 				} else if ( beaconTeam == TEAM_ALIENS ) {
-					return strncpy( out, BG_ClassModelConfig( b->data )->humanName, len ); // Class name
+					return BG_ClassModelConfig( b->data )->humanName; // Class name
 				} else if ( beaconTeam == TEAM_HUMANS ) {
 					// TODO: Display "Light//Chewy/Canned Food" for different armor types.
-					return strncpy( out, "Food", len );
+					return "Food";
 				} else {
-					return strncpy( out, "???", len );
+					return "???";
 				}
 			} else {
 				// Display buildable name for all teams.
-				return strncpy( out, BG_Buildable( b->data )->humanName, len );
+				return BG_Buildable( b->data )->humanName;
 			}
 			break;
 
@@ -781,12 +779,11 @@ const char *CG_BeaconName( const cbeacon_t *b, char *out, size_t len )
 				suffix = "Base";
 			}
 
-			Q_snprintf( out, len, "%s %s", prefix, suffix );
-			return out;
+			return Str::Format( "%s %s", prefix, suffix );
 		}
 
 		default:
 			// All other beacons have a fixed name.
-			return strncpy( out, BG_Beacon( b->type )->text[ 0 ], len );
+			return BG_Beacon( b->type )->text[ 0 ];
 	}
 }

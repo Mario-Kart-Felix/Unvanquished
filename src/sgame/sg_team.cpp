@@ -87,7 +87,7 @@ G_AreaTeamCommand
 Broadcasts a command to only a specific team within a specific range
 ================
 */
-void G_AreaTeamCommand( gentity_t *ent, const char *cmd )
+void G_AreaTeamCommand( const gentity_t *ent, const char *cmd )
 {
 	int    entityList[ MAX_GENTITIES ];
 	int    num, i;
@@ -97,7 +97,7 @@ void G_AreaTeamCommand( gentity_t *ent, const char *cmd )
 
 	for ( i = 0; i < 3; i++ )
 	{
-		range[ i ] = g_sayAreaRange.value;
+		range[ i ] = g_sayAreaRange.Get();
 	}
 
 	VectorAdd( ent->s.origin, range, maxs );
@@ -118,23 +118,24 @@ void G_AreaTeamCommand( gentity_t *ent, const char *cmd )
 }
 
 // TODO: Add a TeamComponent.
-team_t G_Team( gentity_t *ent )
+team_t G_Team( const gentity_t *ent )
 {
+	if ( !ent )
+	{
+		return TEAM_NONE;
+	}
 	if ( ent->client )
 	{
 		return (team_t)ent->client->pers.team;
 	}
-	else if ( ent->s.eType == entityType_t::ET_BUILDABLE )
+	if ( ent->s.eType == entityType_t::ET_BUILDABLE )
 	{
 		return ent->buildableTeam;
 	}
-	else
-	{
-		return TEAM_NONE;
-	}
+	return TEAM_NONE;
 }
 
-bool G_OnSameTeam( gentity_t *ent1, gentity_t *ent2 )
+bool G_OnSameTeam( const gentity_t *ent1, const gentity_t *ent2 )
 {
 	team_t team1 = G_Team( ent1 );
 	return ( team1 != TEAM_NONE && team1 == G_Team( ent2 ) );
@@ -150,7 +151,7 @@ static clientList_t G_ClientListForTeam( team_t team )
 	int          i;
 	clientList_t clientList;
 
-	Com_Memset( &clientList, 0, sizeof( clientList_t ) );
+	memset( &clientList, 0, sizeof( clientList_t ) );
 
 	for ( i = 0; i < level.maxclients; i++ )
 	{
@@ -183,8 +184,8 @@ void G_UpdateTeamConfigStrings()
 	if ( level.intermissiontime )
 	{
 		// No restrictions once the game has ended
-		Com_Memset( &alienTeam, 0, sizeof( clientList_t ) );
-		Com_Memset( &humanTeam, 0, sizeof( clientList_t ) );
+		memset( &alienTeam, 0, sizeof( clientList_t ) );
+		memset( &humanTeam, 0, sizeof( clientList_t ) );
 	}
 
 	trap_SetConfigstringRestrictions( CS_VOTE_TIME + TEAM_ALIENS,   &humanTeam );
@@ -210,7 +211,7 @@ void G_LeaveTeam( gentity_t *self )
 	gentity_t *ent;
 	int       i;
 
-	if ( TEAM_ALIENS == team || TEAM_HUMANS == team )
+	if ( G_IsPlayableTeam( team ) )
 	{
 		G_RemoveFromSpawnQueue( &level.team[ team ].spawnQueue, self->client->ps.clientNum );
 	}
@@ -302,7 +303,7 @@ void G_ChangeTeam( gentity_t *ent, team_t newTeam )
 		           HUMAN_MAX_CREDITS / ALIEN_MAX_CREDITS + 0.5f );
 	}
 
-	if ( !g_cheats.integer )
+	if ( !g_cheats )
 	{
 		if ( ent->client->noclip )
 		{
@@ -386,7 +387,7 @@ void TeamplayInfoMessage( gentity_t *ent )
 	int       curWeaponClass = WP_NONE; // sends weapon for humans, class for aliens
 	int       health = 0;
 
-	if ( !g_allowTeamOverlay.integer )
+	if ( !g_allowTeamOverlay.Get() )
 	{
 		return;
 	}
@@ -508,6 +509,12 @@ void TeamplayInfoMessage( gentity_t *ent )
 	}
 }
 
+static Cvar::Cvar<bool> countBots("g_teamBalanceCountBots", "include bots when checking team size", Cvar::NONE, false);
+int G_PlayerCountForBalance( team_t team )
+{
+	return countBots.Get() ? level.team[ team ].numClients : level.team[ team ].numPlayers;
+}
+
 void CheckTeamStatus()
 {
 	int       i;
@@ -526,8 +533,7 @@ void CheckTeamStatus()
 				continue;
 			}
 
-			if ( ent->inuse && ( ent->client->pers.team == TEAM_HUMANS ||
-			                     ent->client->pers.team == TEAM_ALIENS ) )
+			if ( ent->inuse && G_IsPlayableTeam( ent->client->pers.team ) )
 			{
 				loc = GetCloseLocationEntity( ent );
 
@@ -564,22 +570,22 @@ void CheckTeamStatus()
 	}
 
 	// Warn on imbalanced teams
-	if ( g_teamImbalanceWarnings.integer && !level.intermissiontime &&
+	if ( g_teamImbalanceWarnings.Get() && !level.intermissiontime &&
 	     ( level.time - level.lastTeamImbalancedTime >
-	       ( g_teamImbalanceWarnings.integer * 1000 ) ) &&
+	       ( g_teamImbalanceWarnings.Get() * 1000 ) ) &&
 	     level.numTeamImbalanceWarnings < 3 && !level.restarted )
 	{
 		level.lastTeamImbalancedTime = level.time;
 
 		if ( level.team[ TEAM_ALIENS ].numSpawns > 0 &&
-		     level.team[ TEAM_HUMANS ].numClients - level.team[ TEAM_ALIENS ].numClients > 2 )
+		     G_PlayerCountForBalance( TEAM_HUMANS ) - G_PlayerCountForBalance( TEAM_ALIENS ) > 2 )
 		{
 			trap_SendServerCommand( -1, "print_tr \"" N_("Teams are imbalanced. "
 			                        "Humans have more players.") "\"" );
 			level.numTeamImbalanceWarnings++;
 		}
 		else if ( level.team[ TEAM_HUMANS ].numSpawns > 0 &&
-		          level.team[ TEAM_ALIENS ].numClients - level.team[ TEAM_HUMANS ].numClients > 2 )
+		          G_PlayerCountForBalance( TEAM_ALIENS ) - G_PlayerCountForBalance( TEAM_HUMANS ) > 2 )
 		{
 			trap_SendServerCommand( -1, "print_tr \"" N_("Teams are imbalanced. "
 			                        "Aliens have more players.") "\"" );

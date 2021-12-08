@@ -78,7 +78,7 @@ struct DamageIndicator {
 };
 
 class Clustering : public ::Clustering::EuclideanClustering<DamageIndicator*, 3> {
-	typedef Clustering::EuclideanClustering<DamageIndicator*, 3> super;
+	using super = Clustering::EuclideanClustering<DamageIndicator*, 3>;
 
 public:
 	Clustering(float laxity = 2.0f, std::function<bool(DamageIndicator*,
@@ -110,10 +110,7 @@ static void EnqueueDamageIndicator(Vec3 point, int flags, float value,
 	di.victim = victim;
 
 	if (flags & HIT_BUILDING) {
-		bool alien;
-
-		alien = (cg.predictedPlayerState.persistant[PERS_TEAM]
-		         == TEAM_ALIENS) ^ !(flags & HIT_FRIENDLY);
+		bool alien = (CG_MyTeam() == TEAM_ALIENS) ^ !(flags & HIT_FRIENDLY);
 
 		if (alien)
 			di.layer = DIL_ALIEN_BUILDING;

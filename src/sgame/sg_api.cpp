@@ -34,6 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include "sg_local.h"
 #include "sg_cm_world.h"
+#include "botlib/bot_api.h"
 #include "engine/server/sg_msgdef.h"
 #include "shared/VMMain.h"
 #include "shared/CommonProxies.h"
@@ -72,7 +73,7 @@ void VM::VMHandleSyscall(uint32_t id, Util::Reader reader) {
 
 		case GAME_INIT:
 			IPC::HandleMsg<GameInitMsg>(VM::rootChannel, std::move(reader), [](int levelTime, int randomSeed, bool cheats, bool inClient) {
-				g_cheats.integer = cheats;
+				g_cheats = cheats;
 				G_InitGame(levelTime, randomSeed, inClient);
 			});
 			break;
@@ -138,10 +139,6 @@ void VM::VMHandleSyscall(uint32_t id, Util::Reader reader) {
 			Sys::Drop("BOTAI_START_FRAME not implemented");
 			break;
 
-		case GAME_MESSAGERECEIVED:
-			Sys::Drop("GAME_MESSAGERECEIVED not implemented");
-			break;
-
 		default:
 			Sys::Drop("VMMain(): unknown game command %i", minor);
 		}
@@ -175,13 +172,6 @@ bool trap_EntityContact(const vec3_t mins, const vec3_t maxs, const gentity_t *e
 void trap_Trace( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs,
                  const vec3_t end, int passEntityNum, int contentmask, int skipmask )
 {
-	vec3_t origin = {0.0f, 0.0f, 0.0f};
-	if (!mins) {
-		mins = origin;
-	}
-	if (!maxs) {
-		mins = origin;
-	}
 	G_CM_Trace(results, start, mins, maxs, end, passEntityNum, contentmask, skipmask, traceType_t::TT_AABB);
 }
 

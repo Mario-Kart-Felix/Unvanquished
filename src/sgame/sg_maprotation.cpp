@@ -50,29 +50,30 @@ enum conditionOperator_t
 };
 #define CONDITION_OPERATOR(op) ( ( op ) + '<' )
 
-typedef struct condition_s
+struct mrNode_t;
+struct mrCondition_t
 {
-	struct rotationNode_s       *target;
+	mrNode_t            *target;
 
 	conditionVariable_t lhs;
 	conditionOperator_t operator_;
 
 	int                 intValue;
 	team_t              lastWin;
-} mrCondition_t;
+};
 
-typedef struct map_s
+struct mrMapDescription_t
 {
 	char name[ MAX_QPATH ];
 
 	char postCommand[ MAX_STRING_CHARS ];
 	char layouts[ MAX_CVAR_VALUE_STRING ];
-} mrMapDescription_t;
+};
 
-typedef struct label_s
+struct mrLabel_t
 {
 	char name[ MAX_QPATH ];
-} mrLabel_t;
+};
 
 enum nodeType_t
 {
@@ -84,7 +85,7 @@ enum nodeType_t
   NT_RETURN
 };
 
-typedef struct rotationNode_s
+struct mrNode_t
 {
 	nodeType_t type;
 
@@ -94,7 +95,7 @@ typedef struct rotationNode_s
 		mrCondition_t       condition;
 		mrLabel_t           label;
 	} u;
-} mrNode_t;
+};
 
 struct mapRotation_t
 {
@@ -613,7 +614,7 @@ static bool G_ParseMapRotationFile( const char *fileName )
 	for ( i = 0; i < mapRotations.numRotations; i++ )
 	{
 		mapRotation_t *mr = &mapRotations.rotations[ i ];
-		int           mapCount = 0;
+		bool empty = true;
 
 		for ( j = 0; j < mr->numNodes; j++ )
 		{
@@ -621,7 +622,7 @@ static bool G_ParseMapRotationFile( const char *fileName )
 
 			if ( node->type == NT_MAP )
 			{
-				mapCount++;
+				empty = false;
 
 				if ( !G_MapExists( node->u.map.name ) )
 				{
@@ -648,19 +649,23 @@ static bool G_ParseMapRotationFile( const char *fileName )
 				}
 			}
 
-			if ( ( node->type == NT_GOTO || node->type == NT_RESUME ) &&
-			     !G_LabelExists( i, node->u.label.name ) &&
-			     !G_RotationExists( node->u.label.name ) )
+			if ( node->type == NT_GOTO || node->type == NT_RESUME )
 			{
-				Log::Warn("goto destination named \"%s\" doesn't exist",
-				          node->u.label.name );
-				return false;
+				if ( G_RotationExists( node->u.label.name ) )
+				{
+					empty = false;
+				}
+				else if ( !G_LabelExists( i, node->u.label.name ) )
+				{
+					Log::Warn( "goto destination named \"%s\" doesn't exist", node->u.label.name );
+					return false;
+				}
 			}
 		}
 
-		if ( mapCount == 0 )
+		if ( empty )
 		{
-			Log::Warn("rotation \"%s\" needs at least one map entry",
+			Log::Warn("rotation \"%s\" has no maps",
 			          mr->name );
 			return false;
 		}
@@ -792,7 +797,7 @@ Print the current rotation to an entity
 */
 void G_PrintCurrentRotation( gentity_t *ent )
 {
-	int           mapRotationIndex = g_currentMapRotation.integer;
+	int           mapRotationIndex = g_currentMapRotation.Get();
 	mapRotation_t *mapRotation = G_MapRotationActive() ? &mapRotations.rotations[ mapRotationIndex ] : nullptr;
 	int           i = 0;
 	char          currentMapName[ MAX_QPATH ];
@@ -854,9 +859,9 @@ void G_PrintCurrentRotation( gentity_t *ent )
 		{
 			ADMBP( va( MAP_DEFAULT MAP_CURRENT_MARKER "    " MAP_CURRENT "%s\n", currentMapName ) ); // use current map colour here
 		}
-		if ( currentMap && currentShown && G_MapExists( g_nextMap.string ) )
+		if ( currentMap && currentShown && G_MapExists( g_nextMap.Get().c_str() ) )
 		{
-			ADMBP( va( MAP_DEFAULT "     %s\n", g_nextMap.string ) );
+			ADMBP( va( MAP_DEFAULT "     %s\n", g_nextMap.Get().c_str() ) );
 			currentMap = false;
 		}
 	}
@@ -867,9 +872,9 @@ void G_PrintCurrentRotation( gentity_t *ent )
 	{
 		ADMBP( va( MAP_DEFAULT MAP_CURRENT_MARKER "    " MAP_CURRENT "%s\n", currentMapName ) ); // use current map colour here
 
-		if ( G_MapExists( g_nextMap.string ) )
+		if ( G_MapExists( g_nextMap.Get().c_str() ) )
 		{
-			ADMBP( va( MAP_DEFAULT "     %s\n", g_nextMap.string ) );
+			ADMBP( va( MAP_DEFAULT "     %s\n", g_nextMap.Get().c_str() ) );
 		}
 	}
 
@@ -886,8 +891,7 @@ Clear the rotation stack
 */
 void G_ClearRotationStack()
 {
-	trap_Cvar_Set( "g_mapRotationStack", "" );
-	trap_Cvar_Update( &g_mapRotationStack );
+	g_mapRotationStack.Set("");
 }
 
 /*
@@ -902,9 +906,8 @@ static void G_PushRotationStack( int rotation )
 	char text[ MAX_CVAR_VALUE_STRING ];
 
 	Com_sprintf( text, sizeof( text ), "%d %s",
-	             rotation, g_mapRotationStack.string );
-	trap_Cvar_Set( "g_mapRotationStack", text );
-	trap_Cvar_Update( &g_mapRotationStack );
+	             rotation, g_mapRotationStack.Get().c_str() );
+	g_mapRotationStack.Set(text);
 }
 
 /*
@@ -920,7 +923,7 @@ static int G_PopRotationStack()
 	char text[ MAX_CVAR_VALUE_STRING ];
 	const char *text_p, *token;
 
-	Q_strncpyz( text, g_mapRotationStack.string, sizeof( text ) );
+	Q_strncpyz( text, g_mapRotationStack.Get().c_str(), sizeof( text ) );
 
 	text_p = text;
 	token = COM_Parse( &text_p );
@@ -937,8 +940,7 @@ static int G_PopRotationStack()
 			text_p++;
 		}
 
-		trap_Cvar_Set( "g_mapRotationStack", text_p );
-		trap_Cvar_Update( &g_mapRotationStack );
+		g_mapRotationStack.Set(text_p);
 	}
 	else
 	{
@@ -979,7 +981,7 @@ static int *G_CurrentNodeIndexArray()
 	char       text[ MAX_MAP_ROTATIONS * 2 ];
 	const char       *text_p, *token;
 
-	Q_strncpyz( text, g_mapRotationNodes.string, sizeof( text ) );
+	Q_strncpyz( text, g_mapRotationNodes.Get().c_str(), sizeof( text ) );
 
 	text_p = text;
 
@@ -1018,8 +1020,7 @@ static void G_SetCurrentNodeByIndex( int currentNode, int rotation )
 		Q_strcat( text, sizeof( text ), va( "%d ", p[ i ] ) );
 	}
 
-	trap_Cvar_Set( "g_mapRotationNodes", text );
-	trap_Cvar_Update( &g_mapRotationNodes );
+	g_mapRotationNodes.Set(text);
 }
 
 /*
@@ -1081,9 +1082,9 @@ static void G_IssueMapChange( int index, int rotation )
 	if ( !Q_stricmp( currentMapName, map->name ) )
 	{
 		// Set layout if it exists
-		if ( !g_layouts.string[ 0 ] && map->layouts[ 0 ] )
+		if ( g_layouts.Get().empty() && map->layouts[ 0 ] )
 		{
-			trap_Cvar_Set( "g_layouts", map->layouts );
+			g_layouts.Set(map->layouts);
 		}
 
 		trap_SendConsoleCommand( "map_restart" );
@@ -1094,7 +1095,7 @@ static void G_IssueMapChange( int index, int rotation )
 	else
 	{
 		// allow a manually defined g_layouts setting to override the maprotation
-		if ( !g_layouts.string[ 0 ] && map->layouts[ 0 ] )
+		if ( g_layouts.Get().empty() && map->layouts[ 0 ] )
 		{
 			trap_SendConsoleCommand( va( "map %s %s\n", Quote( map->name ), Quote( map->layouts ) ) );
 		}
@@ -1162,7 +1163,7 @@ static bool G_GotoLabel( int rotation, int nodeIndex, char *name,
 	return false;
 }
 
-static bool G_EvaluateIntegerCondition( mrCondition_t *localCondition, int valueCompared ) 
+static bool G_EvaluateIntegerCondition( mrCondition_t *localCondition, int valueCompared )
 {
 	switch ( localCondition->operator_ )
 	{
@@ -1312,7 +1313,7 @@ bool G_StepMapRotation( int rotation, int nodeIndex, int depth )
 					G_SetCurrentNodeByIndex(
 					  G_NodeIndexAfter( nodeIndex, rotation ), rotation );
 
-					if ( !G_MapExists( g_nextMap.string ) )
+					if ( !G_MapExists( g_nextMap.Get().c_str() ) )
 					{
 						G_IssueMapChange( nodeIndex, rotation );
 					}
@@ -1360,7 +1361,7 @@ void G_AdvanceMapRotation( int depth )
 	int    rotation;
 	int    nodeIndex;
 
-	rotation = g_currentMapRotation.integer;
+	rotation = g_currentMapRotation.Get();
 
 	if ( rotation < 0 || rotation >= MAX_MAP_ROTATIONS )
 	{
@@ -1403,7 +1404,7 @@ bool G_StartMapRotation( const char *name, bool advance,
                              bool putOnStack, bool reset_index, int depth )
 {
 	int i;
-	int currentRotation = g_currentMapRotation.integer;
+	int currentRotation = g_currentMapRotation.Get();
 
 	for ( i = 0; i < mapRotations.numRotations; i++ )
 	{
@@ -1414,8 +1415,7 @@ bool G_StartMapRotation( const char *name, bool advance,
 				G_PushRotationStack( currentRotation );
 			}
 
-			trap_Cvar_Set( "g_currentMapRotation", va( "%d", i ) );
-			trap_Cvar_Update( &g_currentMapRotation );
+			g_currentMapRotation.Set( i );
 
 			if ( advance )
 			{
@@ -1450,8 +1450,7 @@ Stop the current map rotation
 */
 void G_StopMapRotation()
 {
-	trap_Cvar_Set( "g_currentMapRotation", va( "%d", NOT_ROTATING ) );
-	trap_Cvar_Update( &g_currentMapRotation );
+	g_currentMapRotation.Set( NOT_ROTATING );
 }
 
 /*
@@ -1463,20 +1462,18 @@ Test if any map rotation is currently active
 */
 bool G_MapRotationActive()
 {
-	return ( g_currentMapRotation.integer > NOT_ROTATING && g_currentMapRotation.integer <= MAX_MAP_ROTATIONS );
+	return ( g_currentMapRotation.Get() > NOT_ROTATING && g_currentMapRotation.Get() <= MAX_MAP_ROTATIONS );
 }
 
 /*
 ===============
-G_InitMapRotations
+G_LoadMaprotation
 
-Load and initialise the map rotations
+Load a maprotation file if it exists
 ===============
 */
-void G_InitMapRotations()
+void G_LoadMaprotation( const char *fileName )
 {
-	const char *fileName = "maprotation.cfg";
-
 	// Load the file if it exists
 	if ( trap_FS_FOpenFile( fileName, nullptr, fsMode_t::FS_READ ) )
 	{
@@ -1489,15 +1486,31 @@ void G_InitMapRotations()
 	{
 		Log::Warn( "%s file not found.", fileName );
 	}
+}
 
-	if ( g_currentMapRotation.integer == NOT_ROTATING )
+/*
+===============
+G_InitMapRotations
+
+Load and initialise the map rotations
+===============
+*/
+void G_InitMapRotations()
+{
+	G_LoadMaprotation( "default/maprotation.cfg" );
+	G_LoadMaprotation( "maprotation.cfg" );
+
+	if ( g_currentMapRotation.Get() == NOT_ROTATING )
 	{
-		if ( g_initialMapRotation.string[ 0 ] != 0 )
+		if ( !g_initialMapRotation.Get().empty() )
 		{
-			G_StartMapRotation( g_initialMapRotation.string, false, true, false, 0 );
+			if( !G_StartMapRotation( g_initialMapRotation.Get().c_str(), false, true, false, 0 ) )
+			{
+				Log::Warn( "failed to load g_initialMapRotation: %s", g_initialMapRotation.Get() );
+				G_StartMapRotation( "defaultRotation", false, true, false, 0 );
+			}
 
-			trap_Cvar_Set( "g_initialMapRotation", "" );
-			trap_Cvar_Update( &g_initialMapRotation );
+			g_initialMapRotation.Set("");
 		}
 	}
 }

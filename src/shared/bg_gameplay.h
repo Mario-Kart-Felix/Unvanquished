@@ -25,6 +25,16 @@ along with Unvanquished Source Code.  If not, see <http://www.gnu.org/licenses/>
 #ifndef G_GAMEPLAY_H_
 #define G_GAMEPLAY_H_
 
+/* Common constants for the build weapons for both teams.
+ */
+
+// Pressing +deconstruct for less than this many milliseconds toggles the deconstruction mark
+#define BUILDER_MAX_SHORT_DECONSTRUCT_CHARGE 200
+// Holding +deconstruct for this many milliseconds force-deconstructs a buildable
+#define BUILDER_LONG_DECONSTRUCT_CHARGE 800
+
+#define BUILDER_DECONSTRUCT_RANGE 100
+
 /*
  * ALIEN weapons
  */
@@ -50,7 +60,7 @@ extern float LEVEL1_CLAW_RANGE;
 extern float LEVEL1_CLAW_U_RANGE;
 extern float LEVEL1_CLAW_WIDTH;
 #define LEVEL1_POUNCE_DISTANCE        300 // pitch between LEVEL1_POUNCE_MINPITCH and pi/4 results in this distance
-#define LEVEL1_POUNCE_MINPITCH        M_PI / 12.0f // 15°, minimum pitch that will result in full pounce distance
+#define LEVEL1_POUNCE_MINPITCH        (M_PI / 12.0f) // 15°, minimum pitch that will result in full pounce distance
 #define LEVEL1_POUNCE_COOLDOWN        2000
 #define LEVEL1_WALLPOUNCE_MAGNITUDE   600
 #define LEVEL1_WALLPOUNCE_COOLDOWN    1200
@@ -286,8 +296,8 @@ extern int   MEDKIT_STARTUP_SPEED;
 #define JETPACK_FUEL_USAGE            6     // in 1/ms
 #define JETPACK_FUEL_PER_DMG          300   // per damage point received (before armor mod is applied)
 #define JETPACK_FUEL_RESTORE          3     // in 1/ms
-#define JETPACK_FUEL_IGNITE           JETPACK_FUEL_MAX / 20        // used when igniting the engine
-#define JETPACK_FUEL_LOW              JETPACK_FUEL_MAX / 5         // jetpack doesn't start from a jump below this
+#define JETPACK_FUEL_IGNITE           (JETPACK_FUEL_MAX / 20)      // used when igniting the engine
+#define JETPACK_FUEL_LOW              (JETPACK_FUEL_MAX / 5)       // jetpack doesn't start from a jump below this
 #define JETPACK_FUEL_STOP             (JETPACK_FUEL_RESTORE * 150) // jetpack doesn't activate below this
 #define JETPACK_FUEL_REFUEL           (JETPACK_FUEL_MAX - JETPACK_FUEL_USAGE * 1000)
 
@@ -302,6 +312,7 @@ extern int   MEDKIT_STARTUP_SPEED;
 
 // fire
 #define FIRE_MIN_DISTANCE                  20.0f
+#define FIRE_DAMAGE_RADIUS                 60.0f
 
 // fall distance
 #define MIN_FALL_DISTANCE                  30.0f  // the fall distance at which fall damage kicks in
@@ -336,26 +347,26 @@ extern int   MEDKIT_STARTUP_SPEED;
 #define CREDITS_PER_EVO                    100   // Used when alien credits are displayed as evos
 #define PLAYER_BASE_VALUE                  200   // base credit value of a player
 #define PLAYER_PRICE_TO_VALUE              0.5f  // fraction of upgrade price added to player value
-#define DEFAULT_FREEKILL_PERIOD            "120" // in s
+#define DEFAULT_FREEKILL_PERIOD            120 // in s
 
 // resources
 #define RGS_RANGE                          1000.0f // must be > 0
 #define DEFAULT_BP_INITIAL_BUDGET          80      // in BP
 #define DEFAULT_BP_BUDGET_PER_MINER        50      // in BP
-#define DEFAULT_BP_RECOVERY_INITIAL_RATE   "16"    // in BP/min
-#define DEFAULT_BP_RECOVERY_RATE_HALF_LIFE "10"    // in min
+#define DEFAULT_BP_RECOVERY_INITIAL_RATE   16      // in BP/min
+#define DEFAULT_BP_RECOVERY_RATE_HALF_LIFE 10      // in min
 
 // momentum
 #define MOMENTUM_MAX                     300.0f
 #define MOMENTUM_PER_CREDIT              0.01f // used to award momentum based on credit rewards
-#define DEFAULT_MOMENTUM_HALF_LIFE       "5"   // in min
-#define DEFAULT_CONF_REWARD_DOUBLE_TIME  "30"  // in min
-#define DEFAULT_UNLOCKABLE_MIN_TIME      "30"  // in s
-#define DEFAULT_MOMENTUM_BASE_MOD        "0.7"
-#define DEFAULT_MOMENTUM_KILL_MOD        "1.3"
-#define DEFAULT_MOMENTUM_BUILD_MOD       "0.6"
-#define DEFAULT_MOMENTUM_DECON_MOD       "1.0" // used on top of build mod
-#define DEFAULT_MOMENTUM_DESTROY_MOD     "0.8"
+#define DEFAULT_MOMENTUM_HALF_LIFE       5     // in min
+#define DEFAULT_CONF_REWARD_DOUBLE_TIME  30  // in min
+#define DEFAULT_UNLOCKABLE_MIN_TIME      30  // in s
+#define DEFAULT_MOMENTUM_BASE_MOD        0.7
+#define DEFAULT_MOMENTUM_KILL_MOD        1.3
+#define DEFAULT_MOMENTUM_BUILD_MOD       0.6
+#define DEFAULT_MOMENTUM_DECON_MOD       1.0 // used on top of build mod
+#define DEFAULT_MOMENTUM_DESTROY_MOD     0.8
 #define MAIN_STRUCTURE_MOMENTUM_VALUE    20    // momentum reward for destroying OM/RC
 #define MINER_MOMENTUM_VALUE             10    // momentum reward for destroying Drill/Leech
 

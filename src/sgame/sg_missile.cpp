@@ -586,7 +586,7 @@ void G_RunMissile( gentity_t *ent )
 	G_RunThink( ent );
 }
 
-gentity_t *G_SpawnMissile( missile_t missile, gentity_t *parent, vec3_t start, vec3_t dir,
+gentity_t *G_SpawnMissile( missile_t missile, gentity_t *parent, const vec3_t start, const vec3_t dir,
                            gentity_t *target, void ( *think )( gentity_t *self ), int nextthink )
 {
 	gentity_t                 *m;
@@ -621,12 +621,7 @@ gentity_t *G_SpawnMissile( missile_t missile, gentity_t *parent, vec3_t start, v
 	m->splashRadius        = ma->splashRadius;
 	m->splashMethodOfDeath = ma->splashMeansOfDeath;
 	m->clipmask            = ma->clipmask;
-	m->r.mins[ 0 ]         =
-	m->r.mins[ 1 ]         =
-	m->r.mins[ 2 ]         = -ma->size;
-	m->r.maxs[ 0 ]         =
-	m->r.maxs[ 1 ]         =
-	m->r.maxs[ 2 ]         = ma->size;
+	BG_MissileBounds( ma, m->r.mins, m->r.maxs );
 	m->s.eFlags            = ma->flags;
 
 	// not yet implemented / deprecated
@@ -719,7 +714,7 @@ gentity_t *G_SpawnFire( vec3_t origin, vec3_t normal, gentity_t *fireStarter )
 	// send to client
 	trap_LinkEntity( fire );
 
-	if ( g_debugFire.integer )
+	if ( g_debugFire.Get() )
 	{
 		char descr[ 64 ];
 		BG_BuildEntityDescription( descr, sizeof( descr ), &fire->s );

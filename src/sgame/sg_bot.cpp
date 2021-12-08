@@ -177,15 +177,46 @@ static void G_BotNameUsed( team_t team, const char *name, bool inUse )
 	}
 }
 
-bool G_BotSetDefaults( int clientNum, team_t team, int skill, const char* behavior )
+int G_BotGetSkill( int clientNum )
 {
-	botMemory_t *botMind;
-	gentity_t *self = &g_entities[ clientNum ];
-	botMind = self->botMind = &g_botMind[clientNum];
+	gentity_t *bot = &g_entities[clientNum];
 
-	botMind->botTeam = team;
-	BotSetNavmesh( self, (class_t) self->client->ps.stats[ STAT_CLASS ] );
+	if ( !( bot->r.svFlags & SVF_BOT ) || !bot->botMind )
+	{
+		return 0;
+	}
 
+	return bot->botMind->botSkill.level;
+}
+
+const char * G_BotGetBehavior( int clientNum )
+{
+	gentity_t *bot = &g_entities[clientNum];
+
+	if ( !( bot->r.svFlags & SVF_BOT ) || !bot->botMind
+			|| !bot->botMind->behaviorTree )
+	{
+		return nullptr;
+	}
+
+	return bot->botMind->behaviorTree->name;
+}
+
+void G_BotChangeBehavior( int clientNum, const char* behavior )
+{
+	gentity_t *bot = &g_entities[clientNum];
+
+	if ( !( bot->r.svFlags & SVF_BOT ) || !bot->botMind )
+	{
+		Log::Warn( "'^7%s^*' is not a bot", bot->client->pers.netname );
+		return;
+	}
+
+	G_BotSetBehavior( bot->botMind, behavior );
+}
+
+bool G_BotSetBehavior( botMemory_t *botMind, const char* behavior )
+{
 	memset( botMind->runningNodes, 0, sizeof( botMind->runningNodes ) );
 	botMind->numRunningNodes = 0;
 	botMind->currentNode = nullptr;
@@ -205,7 +236,22 @@ bool G_BotSetDefaults( int clientNum, team_t team, int skill, const char* behavi
 			return false;
 		}
 	}
+	return true;
+}
 
+bool G_BotSetDefaults( int clientNum, team_t team, int skill, const char* behavior )
+{
+	botMemory_t *botMind;
+	gentity_t *self = &g_entities[ clientNum ];
+	botMind = self->botMind = &g_botMind[clientNum];
+
+	botMind->botTeam = team;
+	BotSetNavmesh( self, (class_t) self->client->ps.stats[ STAT_CLASS ] );
+
+	if ( !G_BotSetBehavior( botMind, behavior ) )
+	{
+		return false;
+	}
 	BotSetSkillLevel( &g_entities[clientNum], skill );
 
 	g_entities[clientNum].r.svFlags |= SVF_BOT;
@@ -244,8 +290,10 @@ bool G_BotAdd( const char *name, team_t team, int skill, const char *behavior, b
 		return false;
 	}
 	bot = &g_entities[ clientNum ];
+	G_InitGentity( bot );
 	bot->r.svFlags |= SVF_BOT;
-	bot->inuse = true;
+
+	// TODO: probably this should do more of the same stuff as ClientBegin?
 
 	if ( !Q_stricmp( name, BOT_NAME_FROM_LIST ) )
 	{
@@ -267,9 +315,9 @@ bool G_BotAdd( const char *name, team_t team, int skill, const char *behavior, b
 	}
 
 	//so we can connect if server is password protected
-	if ( g_needpass.integer == 1 )
+	if ( g_needpass.Get() )
 	{
-		Info_SetValueForKey( userinfo, "password", g_password.string, false );
+		Info_SetValueForKey( userinfo, "password", g_password.Get().c_str(), false );
 	}
 
 	trap_SetUserinfo( clientNum, userinfo );
@@ -317,7 +365,7 @@ void G_BotDel( int clientNum )
 	autoname = Info_ValueForKey( userinfo, "autoname" );
 	if ( autoname && *autoname )
 	{
-		G_BotNameUsed( BotGetEntityTeam( bot ), autoname, false );
+		G_BotNameUsed( G_Team( bot ), autoname, false );
 	}
 
 	trap_SendServerCommand( -1, va( "print_tr %s %s", QQ( N_( "$1$^* disconnected" ) ),
@@ -373,9 +421,10 @@ void G_BotThink( gentity_t *self )
 	usercmdClearButtons( botCmdBuffer->buttons );
 
 	// for nudges, e.g. spawn blocking
-	nudge[0] = botCmdBuffer->doubleTap != dtType_t::DT_NONE ? botCmdBuffer->forwardmove : 0;
-	nudge[1] = botCmdBuffer->doubleTap != dtType_t::DT_NONE ? botCmdBuffer->rightmove : 0;
-	nudge[2] = botCmdBuffer->doubleTap != dtType_t::DT_NONE ? botCmdBuffer->upmove : 0;
+	bool hasNudge = botCmdBuffer->doubleTap != dtType_t::DT_NONE;
+	nudge[0] = hasNudge ? botCmdBuffer->forwardmove : 0;
+	nudge[1] = hasNudge ? botCmdBuffer->rightmove : 0;
+	nudge[2] = hasNudge ? botCmdBuffer->upmove : 0;
 
 	botCmdBuffer->forwardmove = 0;
 	botCmdBuffer->rightmove = 0;
@@ -391,15 +440,8 @@ void G_BotThink( gentity_t *self )
 	BotFindDamagedFriendlyStructure( self );
 	BotCalculateStuckTime( self );
 
-	//use medkit when hp is low
-	if ( Entities::HealthOf(self) < BOT_USEMEDKIT_HP &&
-	     BG_InventoryContainsUpgrade( UP_MEDKIT, self->client->ps.stats ) )
-	{
-		BG_ActivateUpgrade( UP_MEDKIT, self->client->ps.stats );
-	}
-
 	//infinite funds cvar
-	if ( g_bot_infinite_funds.integer )
+	if ( g_bot_infinite_funds.Get() )
 	{
 		G_AddCreditToClient( self->client, HUMAN_MAX_CREDITS, true );
 	}
@@ -414,19 +456,25 @@ void G_BotThink( gentity_t *self )
 	}
 
 	// always update the path corridor
-	if ( self->botMind->goal.inuse )
+	if ( self->botMind->goal.isValid() )
 	{
 		BotTargetToRouteTarget( self, self->botMind->goal, &routeTarget );
-		trap_BotUpdatePath( self->s.number, &routeTarget, &self->botMind->nav );
+		G_BotUpdatePath( self->s.number, &routeTarget, &self->botMind->nav );
 		//BotClampPos( self );
 	}
 
+	self->botMind->willSprint( false ); //let the BT decide that
 	self->botMind->behaviorTree->run( self, ( AIGenericNode_t * ) self->botMind->behaviorTree );
 
 	// if we were nudged...
 	VectorAdd( self->client->ps.velocity, nudge, self->client->ps.velocity );
 
+	// ensure we really want to sprint or not
 	self->client->pers.cmd = self->botMind->cmdBuffer;
+	self->botMind->doSprint(
+			BG_Class( self->client->ps.stats[ STAT_CLASS ] )->staminaJumpCost,
+			self->client->ps.stats[ STAT_STAMINA ],
+			self->client->pers.cmd );
 }
 
 void G_BotSpectatorThink( gentity_t *self )
@@ -438,6 +486,8 @@ void G_BotSpectatorThink( gentity_t *self )
 	//acknowledge recieved console messages
 	//MUST be done
 	while ( trap_BotGetServerCommand( self->client->ps.clientNum, buf, sizeof( buf ) ) );
+
+	self->botMind->spawnTime = level.time;
 
 	if ( self->client->ps.pm_flags & PMF_QUEUED )
 	{
@@ -463,8 +513,8 @@ void G_BotSpectatorThink( gentity_t *self )
 		return;
 	}
 
-	//reset stuff
-	BotSetTarget( &self->botMind->goal, nullptr, nullptr );
+	// reset stuff
+	self->botMind->goal.clear();
 	self->botMind->bestEnemy.ent = nullptr;
 	BotResetEnemyQueue( &self->botMind->enemyQueue );
 	self->botMind->currentNode = nullptr;
@@ -485,7 +535,7 @@ void G_BotSpectatorThink( gentity_t *self )
 			self->client->ps.stats[STAT_CLASS] = PCL_HUMAN_NAKED;
 			BotSetNavmesh( self, PCL_HUMAN_NAKED );
 			//we want to spawn with rifle unless it is disabled or we need to build
-			if ( g_bot_rifle.integer )
+			if ( g_bot_rifle.Get() )
 			{
 				self->client->pers.humanItemSelection = WP_MACHINEGUN;
 			}
@@ -567,4 +617,34 @@ void G_BotFill(bool immediately)
 			}
 		}
 	}
+}
+
+// declares an intent to sprint or not, should be used by BT functions
+void botMemory_t::willSprint( bool enable )
+{
+	wantSprinting = enable;
+}
+
+// applies the sprint intent, should only be called after all directional
+// or speed intents have been decided, that is, in G_BotThink(), *after*
+// the BT was examined.
+// This currently implements an hysteresis to prevent smart bot to be so
+// exhausted that they can't jump over an obstacle.
+// The hysteresis is meant to allow to recharge enough stamina so that a
+// sprint can be useful, instead of constantly enabling sprint, which in
+// practice result is the "moonwalk bug": AIs moving slower than if just
+// walking, and stamina not recharging at all.
+void botMemory_t::doSprint( int jumpCost, int stamina, usercmd_t& cmd )
+{
+	exhausted = exhausted || ( botSkill.level >= 5 && stamina <= jumpCost + jumpCost / 10 );
+	if ( !exhausted && wantSprinting )
+	{
+		usercmdPressButton( cmd.buttons, BUTTON_SPRINT );
+	}
+	else
+	{
+		usercmdReleaseButton( cmd.buttons, BUTTON_SPRINT );
+	}
+
+	exhausted = exhausted && stamina <= jumpCost * 2;
 }

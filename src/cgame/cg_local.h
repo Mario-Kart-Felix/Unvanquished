@@ -56,7 +56,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define ZOOM_TIME                      150
 #define MUZZLE_FLASH_TIME              20
 
-#define MAX_STEP_CHANGE                32
+#define MAX_STEP_CHANGE                32.0f
 
 #define MAX_VERTS_ON_POLY              10
 #define MAX_MARK_POLYS                 256
@@ -66,7 +66,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #define CGAME_CHAR_WIDTH               32
 #define CGAME_CHAR_HEIGHT              48
 
-#define MAX_LOADING_LABEL_LENGTH       32
+#define MAX_LOADING_TEXT_LENGTH        64
 
 #define MAX_MINIMAP_ZONES              32
 
@@ -445,7 +445,7 @@ struct particle_t
 #define MAX_BASETRAIL_SYSTEMS  64
 #define MAX_BASETRAIL_BEAMS    (MAX_BASETRAIL_SYSTEMS * MAX_BEAMS_PER_SYSTEM)
 
-#define MAX_TRAIL_SYSTEMS      32
+#define MAX_TRAIL_SYSTEMS      50
 #define MAX_TRAIL_BEAMS        (MAX_TRAIL_SYSTEMS * MAX_BEAMS_PER_SYSTEM)
 #define MAX_TRAIL_BEAM_NODES   128
 
@@ -1159,8 +1159,8 @@ struct cg_t
 	char centerPrint[ MAX_STRING_CHARS ];
 
 	// crosshair client ID
-	int      crosshairClientNum;
-	int      crosshairClientTime;
+	int crosshairEntityNum;
+	int crosshairEntityTime;
 	bool crosshairFriend;
 	bool crosshairFoe;
 
@@ -1206,7 +1206,7 @@ struct cg_t
 	int                     spawnTime; // fovwarp
 	int                     weapon1Time; // time when BUTTON_ATTACK went t->f f->t
 	int                     weapon2Time; // time when BUTTON_ATTACK2 went t->f f->t
-	int                     weapon3Time; // time when BUTTON_USE_HOLDABLE went t->f f->t
+	int                     weapon3Time; // time when BUTTON_ATTACK3 went t->f f->t
 	bool                weapon1Firing;
 	bool                weapon2Firing;
 	bool                weapon3Firing;
@@ -1220,10 +1220,11 @@ struct cg_t
 	int                     upMoveTime;
 
 	/* loading */
-	char                    currentLoadingLabel[ MAX_LOADING_LABEL_LENGTH ];
-	float                   charModelFraction; // loading percentages
-	float                   mediaFraction;
-	float                   buildablesFraction;
+	char                    loadingText[ MAX_LOADING_TEXT_LENGTH ];
+	float                   loadingFraction; // loading percentages
+	float                   mediaLoadingFraction;
+	float                   buildableLoadingFraction;
+	float                   characterLoadingFraction;
 
 	int                     lastBuildAttempt;
 	int                     lastEvolveAttempt;
@@ -1372,24 +1373,16 @@ struct rocketDataSource_t
 	int selectedArmouryBuyItem[3];
 	int armouryBuyListCount[3];
 
-	int armourySellList[ WP_NUM_WEAPONS + UP_NUM_UPGRADES ];
-	int selectedArmourySellItem;
-	int armourySellListCount;
-
 	int alienEvolveList[ PCL_NUM_CLASSES ];
-	int selectedAlienEvolve;
 	int alienEvolveListCount;
 
 	int humanBuildList[ BA_NUM_BUILDABLES ];
-	int selectedHumanBuild;
 	int humanBuildListCount;
 
 	int alienBuildList[ BA_NUM_BUILDABLES ];
-	int selectedAlienBuild;
 	int alienBuildListCount;
 
 	int beaconList[ NUM_BEACON_TYPES ];
-	int selectedBeacon;
 	int beaconListCount;
 };
 
@@ -1451,6 +1444,7 @@ struct cgMedia_t
 
 	// buildable shaders
 	qhandle_t             greenBuildShader;
+	qhandle_t             yellowBuildShader;
 	qhandle_t             redBuildShader;
 	qhandle_t             humanSpawningShader;
 
@@ -1552,6 +1546,7 @@ struct cgMedia_t
 	qhandle_t   healthCross;
 	qhandle_t   healthCross2X;
 	qhandle_t   healthCross3X;
+	qhandle_t   healthCross4X;
 	qhandle_t   healthCrossMedkit;
 	qhandle_t   healthCrossPoisoned;
 
@@ -1571,7 +1566,7 @@ struct cgMedia_t
 	sfxHandle_t timerBeaconExpiredSound;
 
 	qhandle_t   damageIndicatorFont;
-  sfxHandle_t killSound;
+	sfxHandle_t killSound;
 };
 
 struct buildStat_t
@@ -1616,8 +1611,7 @@ struct cgs_t
 	int      maxclients;
 	char     mapname[ MAX_QPATH ];
 
-	// TODO: Remove this one.
-	int      powerReactorRange;
+	float    devolveMaxBaseDistance; // used for evolve/devolve ui
 
 	float    momentumHalfLife; // used for momentum bar (un)lock markers
 	float    unlockableMinTime;  // used for momentum bar (un)lock markers
@@ -1659,7 +1653,7 @@ struct cgs_t
 	bool     teamInfoReceived;
 
 	// corpse info
-	clientInfo_t corpseinfo[ MAX_CLIENTS ];
+	clientInfo_t corpseinfo[ PCL_NUM_CLASSES ];
 
 	buildStat_t  alienBuildStat;
 	buildStat_t  humanBuildStat;
@@ -1738,157 +1732,120 @@ extern  const vec3_t        cg_shaderColors[ SHC_NUM_SHADER_COLORS ];
 
 extern  markPoly_t          cg_markPolys[ MAX_MARK_POLYS ];
 
-extern  vmCvar_t            cg_teslaTrailTime;
-extern  vmCvar_t            cg_centertime;
-extern  vmCvar_t            cg_runpitch;
-extern  vmCvar_t            cg_runroll;
-extern  vmCvar_t            cg_swingSpeed;
-extern  vmCvar_t            cg_shadows;
-extern  vmCvar_t            cg_playerShadows;
-extern  vmCvar_t            cg_buildableShadows;
-extern  vmCvar_t            cg_drawTimer;
-extern  vmCvar_t            cg_drawClock;
-extern  vmCvar_t            cg_drawFPS;
-extern  vmCvar_t            cg_drawDemoState;
-extern  vmCvar_t            cg_drawSnapshot;
-extern  vmCvar_t            cg_drawChargeBar;
-extern  vmCvar_t            cg_drawCrosshair;
-extern  vmCvar_t            cg_drawCrosshairHit;
-extern  vmCvar_t            cg_drawCrosshairFriendFoe;
-extern  vmCvar_t            cg_drawCrosshairNames;
-extern  vmCvar_t            cg_drawBuildableHealth;
-extern  vmCvar_t            cg_drawMinimap;
-extern  vmCvar_t            cg_minimapActive;
-extern  vmCvar_t            cg_crosshairSize;
-extern  vmCvar_t            cg_crosshairFile;
-extern  vmCvar_t            cg_drawTeamOverlay;
-extern  vmCvar_t            cg_teamOverlaySortMode;
-extern  vmCvar_t            cg_teamOverlayMaxPlayers;
-extern  vmCvar_t            cg_teamOverlayUserinfo;
-extern  vmCvar_t            cg_draw2D;
-extern  vmCvar_t            cg_animSpeed;
-extern  vmCvar_t            cg_debugAnim;
-extern  vmCvar_t            cg_debugPosition;
-extern  vmCvar_t            cg_debugEvents;
-extern  vmCvar_t            cg_errorDecay;
-extern  vmCvar_t            cg_nopredict;
-extern  vmCvar_t            cg_debugMove;
-extern  vmCvar_t            cg_noPlayerAnims;
-extern  vmCvar_t            cg_showmiss;
-extern  vmCvar_t            cg_footsteps;
-extern  vmCvar_t            cg_addMarks;
-extern  vmCvar_t            cg_viewsize;
-extern  vmCvar_t            cg_drawGun;
-extern  vmCvar_t            cg_gun_frame;
-extern  vmCvar_t            cg_gun_x;
-extern  vmCvar_t            cg_gun_y;
-extern  vmCvar_t            cg_gun_z;
-extern  vmCvar_t            cg_mirrorgun;
-extern  vmCvar_t            cg_tracerChance;
-extern  vmCvar_t            cg_tracerWidth;
-extern  vmCvar_t            cg_tracerLength;
-extern  vmCvar_t            cg_thirdPerson;
-extern  vmCvar_t            cg_thirdPersonAngle;
-extern  vmCvar_t            cg_thirdPersonShoulderViewMode;
-extern  vmCvar_t            cg_staticDeathCam;
-extern  vmCvar_t            cg_thirdPersonPitchFollow;
-extern  vmCvar_t            cg_thirdPersonRange;
-extern  vmCvar_t            cg_lagometer;
-extern  vmCvar_t            cg_drawSpeed;
-extern  vmCvar_t            cg_maxSpeedTimeWindow;
-extern  vmCvar_t            cg_stats;
-extern  vmCvar_t            cg_blood;
-extern  vmCvar_t            cg_teamOverlayUserinfo;
-extern  vmCvar_t            cg_teamChatsOnly;
-extern  vmCvar_t            cg_noVoiceChats;
-extern  vmCvar_t            cg_noVoiceText;
-extern  vmCvar_t            cg_hudFiles;
-extern  vmCvar_t            cg_hudFilesEnable;
-extern  vmCvar_t            cg_smoothClients;
-extern  vmCvar_t            cg_timescaleFadeEnd;
-extern  vmCvar_t            cg_timescaleFadeSpeed;
-extern  vmCvar_t            cg_timescale;
-extern  vmCvar_t            cg_noTaunt;
-extern  vmCvar_t            cg_drawSurfNormal;
-extern  vmCvar_t            cg_drawBBOX;
-extern  vmCvar_t            cg_drawEntityInfo;
-extern  vmCvar_t            cg_wwSmoothTime;
-extern  vmCvar_t            cg_disableBlueprintErrors;
-extern  vmCvar_t            cg_depthSortParticles;
-extern  vmCvar_t            cg_bounceParticles;
-extern  vmCvar_t            cg_consoleLatency;
-extern  vmCvar_t            cg_lightFlare;
-extern  vmCvar_t            cg_debugParticles;
-extern  vmCvar_t            cg_debugTrails;
-extern  vmCvar_t            cg_debugPVS;
-extern  vmCvar_t            cg_disableWarningDialogs;
-extern  vmCvar_t            cg_disableScannerPlane;
-extern  vmCvar_t            cg_tutorial;
+extern Cvar::Cvar<int> cg_teslaTrailTime;
+extern Cvar::Cvar<float> cg_runpitch;
+extern Cvar::Cvar<float> cg_runroll;
+extern Cvar::Cvar<float> cg_swingSpeed;
+extern Cvar::Range<Cvar::Cvar<int>> cg_shadows;
+extern Cvar::Cvar<bool> cg_playerShadows;
+extern Cvar::Cvar<bool> cg_buildableShadows;
+extern Cvar::Cvar<bool> cg_drawTimer;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawClock;
+extern Cvar::Cvar<bool> cg_drawFPS;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawCrosshair;
+extern Cvar::Cvar<bool> cg_drawCrosshairHit;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawCrosshairFriendFoe;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawCrosshairNames;
+extern Cvar::Cvar<bool> cg_drawBuildableHealth;
+extern Cvar::Cvar<bool> cg_drawMinimap;
+extern Cvar::Cvar<int> cg_minimapActive;
+extern Cvar::Cvar<float> cg_crosshairSize;
+extern Cvar::Cvar<std::string> cg_crosshairFile;
+extern Cvar::Range<Cvar::Cvar<int>> cg_teamOverlayUserinfo;
+extern Cvar::Cvar<bool> cg_draw2D;
+extern Cvar::Cvar<bool> cg_animSpeed;
+extern Cvar::Cvar<bool> cg_debugAnim;
+extern Cvar::Cvar<bool> cg_debugEvents;
+extern Cvar::Cvar<float> cg_errorDecay;
+extern Cvar::Cvar<bool> cg_nopredict;
+extern Cvar::Cvar<int> cg_debugMove;
+extern Cvar::Cvar<bool> cg_noPlayerAnims;
+extern Cvar::Cvar<bool> cg_showmiss;
+extern Cvar::Cvar<bool> cg_footsteps;
+extern Cvar::Cvar<bool> cg_addMarks;
+extern Cvar::Cvar<int> cg_viewsize;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawGun;
+extern Cvar::Cvar<float> cg_gun_x;
+extern Cvar::Cvar<float> cg_gun_y;
+extern Cvar::Cvar<float> cg_gun_z;
+extern Cvar::Cvar<bool> cg_mirrorgun;
+extern Cvar::Range<Cvar::Cvar<float>> cg_tracerChance;
+extern Cvar::Cvar<float> cg_tracerWidth;
+extern Cvar::Cvar<float> cg_tracerLength;
+extern Cvar::Cvar<bool> cg_thirdPerson;
+extern Cvar::Cvar<float> cg_thirdPersonAngle;
+extern Cvar::Range<Cvar::Cvar<int>> cg_thirdPersonShoulderViewMode;
+extern Cvar::Cvar<bool> cg_staticDeathCam;
+extern Cvar::Cvar<bool> cg_thirdPersonPitchFollow;
+extern Cvar::Cvar<float> cg_thirdPersonRange;
+extern Cvar::Cvar<bool> cg_lagometer;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawSpeed;
+extern Cvar::Cvar<int> cg_maxSpeedTimeWindow;
+extern Cvar::Cvar<bool> cg_blood;
+extern Cvar::Cvar<bool> cg_teamChatsOnly;
+extern Cvar::Cvar<bool> cg_noVoiceChats;
+extern Cvar::Cvar<bool> cg_noVoiceText;
+extern Cvar::Cvar<bool> cg_smoothClients;
+extern Cvar::Cvar<bool> cg_noTaunt;
+extern Cvar::Cvar<bool> cg_drawSurfNormal;
+extern Cvar::Range<Cvar::Cvar<int>> cg_drawBBOX;
+extern Cvar::Cvar<bool> cg_drawEntityInfo;
+extern Cvar::Cvar<int> cg_wwSmoothTime;
+extern Cvar::Cvar<bool> cg_depthSortParticles;
+extern Cvar::Cvar<bool> cg_bounceParticles;
+extern Cvar::Cvar<int> cg_consoleLatency;
+extern Cvar::Range<Cvar::Cvar<int>> cg_lightFlare;
+extern Cvar::Range<Cvar::Cvar<int>> cg_debugParticles;
+extern Cvar::Cvar<bool> cg_debugPVS;
+extern Cvar::Range<Cvar::Cvar<int>> cg_disableWarningDialogs;
+extern Cvar::Cvar<bool> cg_tutorial;
 
-extern  vmCvar_t            cg_rangeMarkerDrawSurface;
-extern  vmCvar_t            cg_rangeMarkerDrawIntersection;
-extern  vmCvar_t            cg_rangeMarkerDrawFrontline;
-extern  vmCvar_t            cg_rangeMarkerSurfaceOpacity;
-extern  vmCvar_t            cg_rangeMarkerLineOpacity;
-extern  vmCvar_t            cg_rangeMarkerLineThickness;
-extern  vmCvar_t            cg_rangeMarkerForBlueprint;
-extern  vmCvar_t            cg_rangeMarkerBuildableTypes;
-extern  vmCvar_t            cg_rangeMarkerWhenSpectating;
-extern  vmCvar_t            cg_buildableRangeMarkerMask;
-extern  vmCvar_t            cg_binaryShaderScreenScale;
+extern Cvar::Cvar<bool> cg_rangeMarkerDrawSurface;
+extern Cvar::Cvar<bool> cg_rangeMarkerDrawIntersection;
+extern Cvar::Cvar<bool> cg_rangeMarkerDrawFrontline;
+extern Cvar::Range<Cvar::Cvar<float>> cg_rangeMarkerSurfaceOpacity;
+extern Cvar::Range<Cvar::Cvar<float>> cg_rangeMarkerLineOpacity;
+extern Cvar::Cvar<float> cg_rangeMarkerLineThickness;
+extern Cvar::Cvar<bool> cg_rangeMarkerForBlueprint;
+extern Cvar::Modified<Cvar::Cvar<std::string>> cg_rangeMarkerBuildableTypes;
+extern Cvar::Cvar<bool> cg_rangeMarkerWhenSpectating;
+extern int cg_buildableRangeMarkerMask;
+extern Cvar::Range<Cvar::Cvar<float>> cg_binaryShaderScreenScale;
 
-extern  vmCvar_t            cg_painBlendUpRate;
-extern  vmCvar_t            cg_painBlendDownRate;
-extern  vmCvar_t            cg_painBlendMax;
-extern  vmCvar_t            cg_painBlendScale;
-extern  vmCvar_t            cg_painBlendZoom;
+extern Cvar::Cvar<float> cg_painBlendUpRate;
+extern Cvar::Cvar<float> cg_painBlendDownRate;
+extern Cvar::Cvar<float> cg_painBlendMax;
+extern Cvar::Cvar<float> cg_painBlendScale;
+extern Cvar::Cvar<float> cg_painBlendZoom;
 
-extern  vmCvar_t            cg_stickySpec;
-extern  vmCvar_t            cg_sprintToggle;
-extern  vmCvar_t            cg_unlagged;
+extern Cvar::Range<Cvar::Cvar<int>> cg_stickySpec;
+extern Cvar::Range<Cvar::Cvar<int>> cg_sprintToggle;
+extern Cvar::Range<Cvar::Cvar<int>> cg_unlagged;
 
-extern  vmCvar_t            cg_cmdGrenadeThrown;
-extern  vmCvar_t            cg_cmdNeedHealth;
+extern Cvar::Cvar<std::string> cg_cmdGrenadeThrown;
 
-extern  vmCvar_t            cg_debugVoices;
+extern Cvar::Cvar<bool> cg_debugVoices;
 
-extern  vmCvar_t            ui_currentClass;
-extern  vmCvar_t            ui_carriage;
-extern  vmCvar_t            ui_dialog;
-extern  vmCvar_t            ui_voteActive;
-extern  vmCvar_t            ui_alienTeamVoteActive;
-extern  vmCvar_t            ui_humanTeamVoteActive;
-extern  vmCvar_t            ui_unlockables;
+extern Cvar::Cvar<bool> cg_optimizePrediction;
+extern Cvar::Cvar<bool> cg_projectileNudge;
 
-extern vmCvar_t             cg_debugRandom;
+extern Cvar::Cvar<bool> cg_emoticonsInMessages;
 
-extern vmCvar_t             cg_optimizePrediction;
-extern vmCvar_t             cg_projectileNudge;
+extern Cvar::Cvar<bool> cg_chatTeamPrefix;
 
-extern vmCvar_t             cg_voice;
+extern Cvar::Cvar<float> cg_animBlend;
 
-extern vmCvar_t             cg_emoticonsInMessages;
+extern Cvar::Cvar<float> cg_motionblur;
+extern Cvar::Cvar<float> cg_motionblurMinSpeed;
+extern Cvar::Cvar<bool> ui_chatPromptColors;
+extern Cvar::Cvar<bool> cg_spawnEffects;
+extern Cvar::Cvar<std::string> cg_sayCommand;
 
-extern vmCvar_t             cg_chatTeamPrefix;
+extern Cvar::Cvar<bool> cg_lazyLoadModels;
 
-extern vmCvar_t             cg_animBlend;
-
-extern vmCvar_t             cg_motionblur;
-extern vmCvar_t             cg_motionblurMinSpeed;
-extern vmCvar_t             ui_chatPromptColors;
-extern vmCvar_t             cg_spawnEffects;
-extern vmCvar_t             cg_sayCommand;
-
-//
-// Rocket cvars
-//
-
-extern vmCvar_t            rocket_hudFile;
-extern vmCvar_t            rocket_menuFile;
 //
 // cg_main.c
 //
-void       CG_RegisterCvars();
 const char *CG_ConfigString( int index );
 const char *CG_Argv( int arg );
 const char *CG_Args();
@@ -1959,7 +1916,7 @@ void     CG_DrawSphericalCone( const vec3_t tip, const vec3_t rotation, float ra
 void     CG_DrawRangeMarker( rangeMarker_t rmType, const vec3_t origin, float range, const vec3_t angles, Color::Color rgba );
 
 #define CG_ExponentialFade( value, target, lambda ) \
-ExponentialFade( (value), (target), (lambda), (float)cg.frametime * 0.001 );
+		ExponentialFade( (value), (target), (lambda), (float)cg.frametime * 0.001f );
 
 //
 // cg_draw.c
@@ -2001,6 +1958,8 @@ void     CG_InitBuildables();
 void     CG_HumanBuildableDying( buildable_t buildable, vec3_t origin );
 void     CG_HumanBuildableExplosion( buildable_t buildable, vec3_t origin, vec3_t dir );
 void     CG_AlienBuildableExplosion( vec3_t origin, vec3_t dir );
+const centity_t *CG_LookupMainBuildable();
+float    CG_DistanceToBase();
 
 //
 // cg_animation.c
@@ -2039,7 +1998,7 @@ void CG_CheckEvents( centity_t *cent );
 void CG_EntityEvent( centity_t *cent, vec3_t position );
 void CG_PainEvent( centity_t *cent, int health );
 void CG_OnPlayerWeaponChange();
-void CG_OnPlayerUpgradeChange();
+void CG_Rocket_UpdateArmouryMenu();
 void CG_OnMapRestart();
 
 //
@@ -2056,12 +2015,45 @@ void CG_PositionRotatedEntityOnTag( refEntity_t *entity, const refEntity_t *pare
                                     qhandle_t parentModel, const char *tagName );
 void CG_TransformSkeleton( refSkeleton_t *skel, const vec_t scale );
 
+team_t CG_Team(const entityState_t &es);
+inline team_t CG_Team(const centity_t *ent) {
+	return CG_Team(ent->currentState);
+}
+
+// The team of yourself or the followed player.
+// To get the team you joined at the title screen, use
+//         cgs.clientinfo[ cg.clientNum ].team
+// But beware that this function is probably the one you want.
+inline team_t CG_MyTeam() {
+	return static_cast<team_t>(cg.predictedPlayerState.persistant[PERS_TEAM]);
+}
+
+inline bool CG_IsOnMyTeam(const centity_t *ent) {
+	return CG_Team(ent) == CG_MyTeam();
+}
+inline bool CG_IsOnMyTeam(const entityState_t &es) {
+	return CG_Team(es) == CG_MyTeam();
+}
+
+int CG_Health(const entityState_t &es);
+inline int CG_Health(const centity_t *ent) {
+	return CG_Health(ent->currentState);
+}
+inline bool CG_IsAlive(const entityState_t &es) {
+	return CG_Health(es) > 0;
+}
+inline bool CG_IsAlive(const centity_t *ent) {
+	return CG_Health(ent->currentState) > 0;
+}
+
 //
 // cg_weapons.c
 //
+weapon_t CG_FindNextWeapon( playerState_t *ps );
 void CG_NextWeapon_f();
 void CG_PrevWeapon_f();
 void CG_Weapon_f();
+void CG_SelectNextInventoryItem_f();
 
 void CG_InitUpgrades();
 void CG_RegisterUpgrade( int upgradeNum );
@@ -2185,7 +2177,7 @@ void          CG_LoadTrailSystems();
 qhandle_t     CG_RegisterTrailSystem( const char *name );
 
 trailSystem_t *CG_SpawnNewTrailSystem( qhandle_t psHandle );
-void          CG_DestroyTrailSystem( trailSystem_t **ts );
+void          CG_DestroyTrailSystem( trailSystem_t *ts );
 
 bool      CG_IsTrailSystemValid( trailSystem_t **ts );
 
@@ -2207,7 +2199,7 @@ void          CG_LoadBeaconsConfig();
 void          CG_RunBeacons();
 qhandle_t     CG_BeaconIcon( const cbeacon_t *b );
 qhandle_t     CG_BeaconDescriptiveIcon( const cbeacon_t *b );
-const char    *CG_BeaconName( const cbeacon_t *b, char *out, size_t len );
+std::string   CG_BeaconName( const cbeacon_t *b );
 
 //
 //===============================================
@@ -2274,7 +2266,6 @@ int CG_Rocket_GetDataSourceIndex( const char *dataSource, const char *table );
 void CG_Rocket_FilterDataSource( const char *dataSource, const char *table, const char *filter );
 void CG_Rocket_BuildServerInfo();
 void CG_Rocket_BuildServerList( const char *args );
-void CG_Rocket_BuildArmourySellList( const char *table );
 void CG_Rocket_BuildArmouryBuyList( const char *table );
 void CG_Rocket_BuildPlayerList( const char *table );
 
@@ -2287,6 +2278,12 @@ float CG_Rocket_ProgressBarValue( Str::StringRef name );
 // cg_gameinfo.c
 //
 void CG_LoadArenas();
+
+//
+// translation.cpp
+//
+void Trans_Init();
+void Trans_UpdateLanguage_f();
 
 //
 // Rocket Functions
@@ -2305,8 +2302,8 @@ void Rocket_DSAddRow( const char *name, const char *table, const char *data );
 void Rocket_DSChangeRow( const char *name, const char *table, const int row, const char *data );
 void Rocket_DSRemoveRow( const char *name, const char *table, const int row );
 void Rocket_DSClearTable( const char *name, const char *table );
-void Rocket_SetInnerRMLById( const char* name, const char* id, const char* RML, int parseFlags );
-void Rocket_SetInnerRML( const char* RML, int parseFlags );
+void Rocket_SetInnerRML( const char* text, int parseFlags );
+void Rocket_SetInnerRMLRaw( const char* RML );
 void Rocket_QuakeToRMLBuffer( const char *in, char *out, int length );
 void Rocket_GetEventParameters( char *params, int length );
 void Rocket_RegisterDataFormatter( const char *name );

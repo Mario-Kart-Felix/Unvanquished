@@ -25,7 +25,158 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "sg_bot_ai.h"
 #include "sg_bot_util.h"
+#include "CBSE.h"
+#include "shared/bg_local.h" // MIN_WALK_NORMAL
 #include "Entities.h"
+
+static void ListTeamEquipment( gentity_t *self, unsigned int (&numUpgrades)[UP_NUM_UPGRADES], unsigned int (&numWeapons)[WP_NUM_WEAPONS] );
+static const int MIN_SKILL = 1;
+static const int MAX_SKILL = 9;
+static const int RANGE_SKILL = MAX_SKILL - MIN_SKILL;
+
+// computes a percent modifier out of skill level which is easier to work with
+// between 0 and 1
+static float SkillModifier( int botSkill )
+{
+       return static_cast<float>( botSkill - MIN_SKILL ) / RANGE_SKILL;
+}
+
+static float GetMaximalSpeed( gentity_t const *self );
+static float GetMaximalSpeed( class_t cl );
+
+// helper function to make code more readable
+static float GetMaximalSpeed( gentity_t const *self )
+{
+	return GetMaximalSpeed( static_cast<class_t>( self->client->ps.stats[ STAT_CLASS ] ) );
+}
+
+// returns maximum "ground speed" of a class
+// It should likely be replaced by the real formula, but I don't know
+// it, and the results are good enough (tm).
+static float GetMaximalSpeed( class_t cl )
+{
+	return BG_Class( cl )->speed * BG_Class( cl )->sprintMod * g_speed.Get();
+}
+
+template <typename T>
+struct equipment_t
+{
+	Cvar::Cvar<bool>& authorized;
+	T item;
+	int price( void ) const;
+	bool unlocked( void ) const;
+	bool canBuyNow( void ) const
+	{
+		return authorized.Get() && unlocked();
+	}
+	int slots( void ) const;
+};
+
+/// let's write some duplicated code because of nice API
+/// start sillyness {
+
+// price
+template <>
+int equipment_t<class_t>::price( void ) const
+{
+	return BG_Class( item )->price;
+}
+
+template <>
+int equipment_t<upgrade_t>::price( void ) const
+{
+	return BG_Upgrade( item )->price;
+}
+
+template <>
+int equipment_t<weapon_t>::price( void ) const
+{
+	return BG_Weapon( item )->price;
+}
+
+// unlocked
+template <>
+bool equipment_t<class_t>::unlocked( void ) const
+{
+	return BG_ClassUnlocked( item );
+}
+
+template <>
+bool equipment_t<upgrade_t>::unlocked( void ) const
+{
+	return BG_UpgradeUnlocked( item );
+}
+
+template <>
+bool equipment_t<weapon_t>::unlocked( void ) const
+{
+	return BG_WeaponUnlocked( item );
+}
+
+// slots
+template <>
+int equipment_t<class_t>::slots( void ) const
+{
+	return 0; //classes do not really take slots
+}
+
+template <>
+int equipment_t<upgrade_t>::slots( void ) const
+{
+	return BG_Upgrade( item )->slots;
+}
+
+template <>
+int equipment_t<weapon_t>::slots( void ) const
+{
+	return BG_Weapon( item )->slots;
+}
+
+/// } end of sillyness
+
+// manually sorted by preference, hopefully a future patch will have a much smarter way
+equipment_t<class_t> classes[] =
+{
+	{ g_bot_level4    , PCL_ALIEN_LEVEL4       },
+	{ g_bot_level3upg , PCL_ALIEN_LEVEL3_UPG   },
+	{ g_bot_level3    , PCL_ALIEN_LEVEL3       },
+	{ g_bot_level2upg , PCL_ALIEN_LEVEL2_UPG   },
+	{ g_bot_level2    , PCL_ALIEN_LEVEL2       },
+	{ g_bot_level1    , PCL_ALIEN_LEVEL1       },
+	{ g_bot_level0    , PCL_ALIEN_LEVEL0       },
+	{ g_bot_builderupg, PCL_ALIEN_BUILDER0_UPG },
+	{ g_bot_builder   , PCL_ALIEN_BUILDER0     },
+};
+
+// manually sorted by preference, hopefully a future patch will have a much smarter way to select weapon
+equipment_t<upgrade_t> armors[] =
+{
+	{ g_bot_battlesuit  , UP_BATTLESUIT },
+	{ g_bot_mediumarmour, UP_MEDIUMARMOUR },
+	{ g_bot_lightarmour , UP_LIGHTARMOUR },
+};
+// not merged because they are not armors
+equipment_t<upgrade_t> others[] =
+{
+	{ g_bot_radar   , UP_RADAR },
+	{ g_bot_grenade , UP_GRENADE },
+	{ g_bot_firebomb, UP_FIREBOMB },
+};
+
+// manually sorted by preference, hopefully a future patch will have a much smarter way to select weapon
+equipment_t<weapon_t> weapons[] =
+{
+	{ g_bot_lcannon , WP_LUCIFER_CANNON },
+	{ g_bot_flamer  , WP_FLAMER },
+	// pulse rifle has lower priority to keep previous "correct" behavior
+	{ g_bot_prifle  , WP_PULSE_RIFLE },
+	{ g_bot_chaingun, WP_CHAINGUN },
+	{ g_bot_mdriver , WP_MASS_DRIVER },
+	{ g_bot_lasgun  , WP_LAS_GUN },
+	{ g_bot_shotgun , WP_SHOTGUN },
+	{ g_bot_painsaw , WP_PAIN_SAW },
+	{ g_bot_rifle   , WP_MACHINEGUN },
+};
 
 /*
 =======================
@@ -33,61 +184,170 @@ Scoring functions for logic
 =======================
 */
 
-float BotGetBaseRushScore( gentity_t *ent )
+botEntityAndDistance_t BotGetClosestBuildingAmongTypes(
+		gentity_t *self, const std::initializer_list<buildable_t> buildables )
 {
-
-	switch ( ent->s.weapon )
+	botEntityAndDistance_t best_choice = { nullptr, 1.0e30f };
+	for ( buildable_t buildable : buildables )
 	{
-		case WP_BLASTER:
-			return 0.1f;
-		case WP_LUCIFER_CANNON:
-			return 1.0f;
-		case WP_MACHINEGUN:
-			return 0.5f;
-		case WP_PULSE_RIFLE:
-			return 0.7f;
-		case WP_LAS_GUN:
-			return 0.7f;
-		case WP_SHOTGUN:
-			return 0.2f;
-		case WP_CHAINGUN:
-			if ( BG_InventoryContainsUpgrade( UP_BATTLESUIT, ent->client->ps.stats ) )
-			{
-				return 0.5f;
-			}
-			else
-			{
-				return 0.2f;
-			}
-		case WP_HBUILD:
-			return 0.0f;
-		case WP_ABUILD:
-			return 0.0f;
-		case WP_ABUILD2:
-			return 0.0f;
-		case WP_ALEVEL0:
-			return 0.0f;
-		case WP_ALEVEL1:
-			return 0.2f;
-		case WP_ALEVEL2:
-			return 0.5f;
-		case WP_ALEVEL2_UPG:
-			return 0.7f;
-		case WP_ALEVEL3:
-			return 0.8f;
-		case WP_ALEVEL3_UPG:
-			return 0.9f;
-		case WP_ALEVEL4:
-			return 1.0f;
-		default:
-			return 0.5f;
+		botEntityAndDistance_t candidate =
+			self->botMind->closestBuildings[ buildable ];
+		if ( candidate.ent && candidate.distance < best_choice.distance )
+		{
+			best_choice = candidate;
+		}
+	}
+	return best_choice;
+}
+
+const gentity_t *BotGetHealTarget( gentity_t *self )
+{
+	if ( G_Team(self) == TEAM_HUMANS )
+	{
+		return self->botMind->closestBuildings[BA_H_MEDISTAT].ent;
+	}
+
+	// Aliens
+	if ( self->botMind->closestBuildings[BA_A_BOOSTER].ent )
+	{
+		// powered booster
+		return self->botMind->closestBuildings[BA_A_BOOSTER].ent;
+	}
+	else
+	{
+		// no working booster, rely on creep instead
+		return BotGetClosestBuildingAmongTypes( self,
+				{ BA_A_SPAWN, BA_A_OVERMIND, BA_A_BARRICADE,
+				  BA_A_ACIDTUBE, BA_A_TRAPPER, BA_A_HIVE,
+				  BA_A_LEECH, BA_A_SPIKER }
+				).ent;
 	}
 }
 
+// computes the maximum credits this bot could spend in
+// equipment (or classes) with infinite credits.
+static int GetMaxEquipmentCost( gentity_t const* self )
+{
+	int max_value = 0;
+	switch( G_Team( self ) )
+	{
+		case TEAM_ALIENS:
+			for ( auto const& pcl : classes )
+			{
+				if( pcl.canBuyNow() )
+				{
+					max_value = std::max( max_value, pcl.price() );
+				}
+			}
+			break;
+		case TEAM_HUMANS:
+			// all this code, just to know what the higher equipment cost
+			// authorized at current stage.
+			{
+				bool canUseBackpack = true;
+				int max_item_val;
+
+				max_item_val = 0;
+				for ( auto const &armor : armors )
+				{
+					// this is very hackish and should be improved, like, a lot.
+					// in short: add the value of possible backpacks if armor is
+					// not battlesuit.
+					// This will break when more equipments will use multiple slots,
+					// but the game does not (yet) have easy way to handle those.
+					if ( armor.canBuyNow() && max_item_val < armor.price() )
+					{
+						max_item_val = armor.price();
+						canUseBackpack = armor.item != UP_BATTLESUIT;
+					}
+				}
+
+				if( canUseBackpack && g_bot_radar.Get() && BG_UpgradeUnlocked( UP_RADAR ) )
+				{
+					max_item_val += BG_Upgrade( UP_RADAR )->price;
+				}
+				max_value += max_item_val;
+
+				max_item_val = 0;
+				for ( auto const& wp : weapons )
+				{
+					if( wp.canBuyNow() )
+					{
+						max_item_val = std::max( max_item_val, wp.price() );
+					}
+				}
+				max_value += max_item_val;
+				break;
+			}
+		default:
+			ASSERT_UNREACHABLE();
+	}
+	return max_value;
+}
+
+// Gives a value between 0 and 1 representing how much a bot should want to rush.
+// A rush is basically: target enemy's base.
+// The idea is to have bots rushing depending on the value of their equipment,
+// their skill level and what they are currently authorized to buy.
+// Basically, higher skilled bots should save money before rushing, so that they
+// would not be naked at their death.
+// In current state of code, human bots no longer wait for battlesuit to attack,
+// but alien bots are still rushing too much, probably because of their tracking
+// ability and "speed".
+// Those problems can probably *not* be fixed in this place, though.
+// TODO: have a way to increase rush score depedning on much of mates are rushing
+//       I suppose I'll have to need a team_t struct, which would contain some
+//       modifier, itself reconstructed each "frame", increased depending on
+//       team's average credits / player?
+// TODO: compare both team's momentums to know if rushing is wise?
+// TODO: check number of spawns, if less than 2, apply big score reduction?
+float BotGetBaseRushScore( gentity_t *ent )
+{
+	ASSERT( ent && ent->botMind && ent->client );
+	const float skill_modifier = 1 - 2 * SkillModifier( ent->botMind->botSkill.level );
+	// if nothing allowed from current stage have a cost,
+	// return average value on which other parameters can weight
+	float rush_score = 0.5;
+
+	float self_value = static_cast<float>(
+		ent->client->ps.persistant[PERS_CREDIT]
+			+ BG_GetPlayerPrice( ent->client->ps ) );
+
+	int max_value = GetMaxEquipmentCost( ent );
+	if ( max_value != 0 )
+	{
+		rush_score = ( self_value + skill_modifier * max_value )/ max_value;
+		rush_score = Math::Clamp( rush_score, 0.f, 1.f );
+	}
+	return rush_score;
+}
+
+// Calculates how important a bot should consider finding a heal source
+// returns a number between 0 and 1, 1 being "I need to heal"
+// The idea is to make bots more likely to do "opportunistic healing",
+// that is, if they have taken only low damages but a heal source is
+// at a distance which can be reached very quickly, replenish health.
+// But if heal source is too far, don't even try, even if almost dead,
+// because it would require more time to go to healer, wait for heal,
+// go back into action.
+// Also, the more damaged you are, the more vulnerable you are when
+// going back to heal, thus just finish what you were up to.
+//
+// Note that, as for anything involving distances to take decisions in
+// game, it's broken because distances are from point A to point B:
+// they are "ghost fly distances" (even faster than birds).
+//
+// The "amplification factor" of 5 have no special meaning, and was
+// only choosen because it "looks good" on the curve.
 float BotGetHealScore( gentity_t *self )
 {
+	float percentHealth = Entities::HealthFraction(self);
+	if ( percentHealth == 1.0f )
+	{
+		return 0.0f;
+	}
+
 	float distToHealer = 0;
-	float percentHealth = 0;
 
 	if ( self->client->pers.team == TEAM_ALIENS )
 	{
@@ -95,13 +355,16 @@ float BotGetHealScore( gentity_t *self )
 		{
 			distToHealer = self->botMind->closestBuildings[ BA_A_BOOSTER ].distance;
 		}
-		else if ( self->botMind->closestBuildings[ BA_A_OVERMIND ].ent )
+		else
 		{
-			distToHealer = self->botMind->closestBuildings[ BA_A_OVERMIND ].distance;
-		}
-		else if ( self->botMind->closestBuildings[ BA_A_SPAWN ].ent )
-		{
-			distToHealer = self->botMind->closestBuildings[BA_A_SPAWN].distance;
+			// no booster, let's use creep instead
+			distToHealer =
+				BotGetClosestBuildingAmongTypes( self,
+					{ BA_A_SPAWN, BA_A_OVERMIND,
+					  BA_A_BARRICADE, BA_A_ACIDTUBE,
+					  BA_A_TRAPPER, BA_A_HIVE, BA_A_LEECH,
+					  BA_A_SPIKER }
+					).distance;
 		}
 	}
 	else
@@ -109,15 +372,8 @@ float BotGetHealScore( gentity_t *self )
 		distToHealer = self->botMind->closestBuildings[ BA_H_MEDISTAT ].distance;
 	}
 
-	percentHealth = Entities::HealthFraction(self);
-
-	distToHealer = std::max( std::min( MAX_HEAL_DIST, distToHealer ), MAX_HEAL_DIST * ( 3.0f / 4.0f ) );
-
-	if ( percentHealth == 1.0f )
-	{
-		return 1.0f;
-	}
-	return percentHealth * distToHealer / MAX_HEAL_DIST;
+	float timeDist = distToHealer / GetMaximalSpeed( self );
+	return ( 1 + 5 * SkillModifier( self->botMind->botSkill.level ) ) * ( 1 - percentHealth ) / sqrt( timeDist );
 }
 
 float BotGetEnemyPriority( gentity_t *self, gentity_t *ent )
@@ -239,22 +495,20 @@ float BotGetEnemyPriority( gentity_t *self, gentity_t *ent )
 }
 
 
-bool BotCanEvolveToClass( gentity_t *self, class_t newClass )
+bool BotCanEvolveToClass( const gentity_t *self, class_t newClass )
 {
-	return ( BG_ClassCanEvolveFromTo( ( class_t )self->client->ps.stats[STAT_CLASS], newClass,
-	                                  self->client->ps.persistant[PERS_CREDIT] ) >= 1 );
+	int fromClass = self->client->ps.stats[STAT_CLASS];
+	evolveInfo_t info = BG_ClassEvolveInfoFromTo( fromClass, newClass );
+
+	// TODO: one might be willing to allow switching to same cost classes,
+	// notably, from dretch to advanced granger when base in on fire.
+	return info.classIsUnlocked && info.evolveCost > 0 // no devolving
+		&& self->client->ps.persistant[PERS_CREDIT] >= info.evolveCost;
 }
 
 bool WeaponIsEmpty( weapon_t weapon, playerState_t *ps )
 {
-	if ( ps->ammo <= 0 && ps->clips <= 0 && !BG_Weapon( weapon )->infiniteAmmo )
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
+	return ps->ammo <= 0 && ps->clips <= 0 && !BG_Weapon( weapon )->infiniteAmmo;
 }
 
 float PercentAmmoRemaining( weapon_t weapon, playerState_t *ps )
@@ -278,154 +532,130 @@ float PercentAmmoRemaining( weapon_t weapon, playerState_t *ps )
 	}
 }
 
-int BotValueOfWeapons( gentity_t *self )
+AINodeStatus_t BotActionEvolve ( gentity_t *self, AIGenericNode_t* )
 {
-	int worth = 0;
-	int i;
-
-	for ( i = WP_NONE + 1; i < WP_NUM_WEAPONS; i++ )
+	if ( !g_bot_evolve.Get() )
 	{
-		if ( BG_InventoryContainsWeapon( i, self->client->ps.stats ) )
+		return STATUS_FAILURE;
+	}
+
+	for ( auto const& cl : classes )
+	{
+		if ( cl.authorized.Get() && BotCanEvolveToClass( self, cl.item ) && BotEvolveToClass( self, cl.item ) )
 		{
-			worth += BG_Weapon( ( weapon_t )i )->price;
+			return STATUS_SUCCESS;
 		}
 	}
-	return worth;
-}
-int BotValueOfUpgrades( gentity_t *self )
-{
-	int worth = 0;
-	int i;
 
-	for ( i = UP_NONE + 1; i < UP_NUM_UPGRADES; i++ )
-	{
-		if ( BG_InventoryContainsUpgrade( i, self->client->ps.stats ) )
-		{
-			worth += BG_Upgrade( ( upgrade_t ) i )->price;
-		}
-	}
-	return worth;
+	return STATUS_FAILURE;
 }
 
-void BotGetDesiredBuy( gentity_t *self, weapon_t *weapon, upgrade_t *upgrades, int *numUpgrades )
+// Allow human bots to decide what to buy
+// pre-condition:
+// * weapon is a valid pointer
+// * "upgrades" is an array of at least upgradesSize elements
+// post-conditions:
+// * "upgrades" contains a list of upgrades to use
+// * "weapon" contains weapon to use
+// * Returns number of upgrades to buy (does not includes weapons)
+//
+// will favor better armor above everything else. If it is possible
+// to buy an armor, then evaluate other team-utilies and finally choose
+// the most expensive gun possible.
+// TODO: allow bots to buy jetpack, despite the fact they can't use them
+//  (yet): since default cVar prevent bots to buy those, that will be one
+//  less thing to change later and would have no impact.
+int BotGetDesiredBuy( gentity_t *self, weapon_t &weapon, upgrade_t upgrades[], size_t upgradesSize )
 {
-	int i;
-	int equipmentPrice = BotValueOfWeapons( self ) + BotValueOfUpgrades( self );
+	ASSERT( self && upgrades );
+	ASSERT( self->client->pers.team == TEAM_HUMANS ); // only humans can buy
+	ASSERT( upgradesSize >= 2 ); // we access to 2 elements maximum, and don't really check boundaries (would result in a nerf)
+	int equipmentPrice = BG_GetPlayerPrice( self->client->ps );
 	int credits = self->client->ps.persistant[PERS_CREDIT];
 	int usableCapital = credits + equipmentPrice;
+	size_t numUpgrades = 0;
+	int usedSlots = 0;
 
-	//decide what upgrade(s) to buy
-	if ( BG_WeaponUnlocked( WP_PAIN_SAW ) && BG_UpgradeUnlocked( UP_BATTLESUIT ) &&
-	     usableCapital >= ( BG_Weapon( WP_PAIN_SAW )->price + BG_Upgrade( UP_BATTLESUIT )->price ) )
+	unsigned int numTeamUpgrades[UP_NUM_UPGRADES] = {};
+	unsigned int numTeamWeapons[WP_NUM_WEAPONS] = {};
+
+	ListTeamEquipment( self, numTeamUpgrades, numTeamWeapons );
+	weapon = WP_NONE;
+	for ( size_t i = 0; i < upgradesSize; ++i )
 	{
-		upgrades[0] = UP_BATTLESUIT;
-		*numUpgrades = 1;
-	}
-	else if ( BG_WeaponUnlocked( WP_SHOTGUN ) && BG_UpgradeUnlocked( UP_MEDIUMARMOUR ) && BG_UpgradeUnlocked( UP_RADAR ) &&
-	          usableCapital >= ( BG_Weapon( WP_SHOTGUN )->price + BG_Upgrade( UP_MEDIUMARMOUR )->price + BG_Upgrade( UP_RADAR )->price ) )
-	{
-		upgrades[0] = UP_MEDIUMARMOUR;
-		upgrades[1] = UP_RADAR;
-		*numUpgrades = 2;
-	}
-	else if ( BG_WeaponUnlocked( WP_SHOTGUN ) && BG_UpgradeUnlocked( UP_LIGHTARMOUR ) && BG_UpgradeUnlocked( UP_RADAR ) &&
-	          usableCapital >= ( BG_Weapon( WP_SHOTGUN )->price + BG_Upgrade( UP_LIGHTARMOUR )->price + BG_Upgrade( UP_RADAR )->price ) )
-	{
-		upgrades[0] = UP_LIGHTARMOUR;
-		upgrades[1] = UP_RADAR;
-		*numUpgrades = 2;
-	}
-	else if ( BG_WeaponUnlocked( WP_PAIN_SAW ) && BG_UpgradeUnlocked( UP_MEDIUMARMOUR ) &&
-	          usableCapital >= ( BG_Weapon( WP_PAIN_SAW )->price + BG_Upgrade( UP_MEDIUMARMOUR )->price ) )
-	{
-		upgrades[0] = UP_MEDIUMARMOUR;
-		*numUpgrades = 1;
-	}
-	else if ( BG_WeaponUnlocked( WP_PAIN_SAW ) && BG_UpgradeUnlocked( UP_LIGHTARMOUR ) &&
-	          usableCapital >= ( BG_Weapon( WP_PAIN_SAW )->price + BG_Upgrade( UP_LIGHTARMOUR )->price ) )
-	{
-		upgrades[0] = UP_LIGHTARMOUR;
-		*numUpgrades = 1;
-	}
-	else
-	{
-		*numUpgrades = 0;
+		upgrades[i] = UP_NONE;
 	}
 
-	for (i = 0; i < *numUpgrades; i++)
+	for ( auto const &armor : armors )
 	{
-		usableCapital -= BG_Upgrade( upgrades[i] )->price;
-	}
-
-	//now decide what weapon to buy
-	if ( g_bot_lcannon.integer && BG_WeaponUnlocked( WP_LUCIFER_CANNON ) && usableCapital >= BG_Weapon( WP_LUCIFER_CANNON )->price )
-	{
-		*weapon = WP_LUCIFER_CANNON;;
-	}
-	else if ( g_bot_chaingun.integer && BG_WeaponUnlocked( WP_CHAINGUN ) && usableCapital >= BG_Weapon( WP_CHAINGUN )->price && upgrades[0] == UP_BATTLESUIT )
-	{
-		*weapon = WP_CHAINGUN;
-	}
-	else if ( g_bot_flamer.integer && BG_WeaponUnlocked( WP_FLAMER ) && usableCapital >= BG_Weapon( WP_FLAMER )->price )
-	{
-		*weapon = WP_FLAMER;
-	}
-	else if ( g_bot_prifle.integer && BG_WeaponUnlocked( WP_PULSE_RIFLE ) && usableCapital >= BG_Weapon( WP_PULSE_RIFLE )->price )
-	{
-		*weapon = WP_PULSE_RIFLE;
-	}
-	else if ( g_bot_chaingun.integer && BG_WeaponUnlocked( WP_CHAINGUN ) && usableCapital >= BG_Weapon( WP_CHAINGUN )->price )
-	{
-		*weapon = WP_CHAINGUN;;
-	}
-	else if ( g_bot_mdriver.integer && BG_WeaponUnlocked( WP_MASS_DRIVER ) && usableCapital >= BG_Weapon( WP_MASS_DRIVER )->price )
-	{
-		*weapon = WP_MASS_DRIVER;
-	}
-	else if ( g_bot_lasgun.integer && BG_WeaponUnlocked( WP_LAS_GUN ) && usableCapital >= BG_Weapon( WP_LAS_GUN )->price )
-	{
-		*weapon = WP_LAS_GUN;
-	}
-	else if ( g_bot_shotgun.integer && BG_WeaponUnlocked( WP_SHOTGUN ) && usableCapital >= BG_Weapon( WP_SHOTGUN )->price )
-	{
-		*weapon = WP_SHOTGUN;
-	}
-	else if ( g_bot_painsaw.integer && BG_WeaponUnlocked( WP_PAIN_SAW ) && usableCapital >= BG_Weapon( WP_PAIN_SAW )->price )
-	{
-		*weapon = WP_PAIN_SAW;
-	}
-	else
-	{
-		*weapon = WP_MACHINEGUN;
-	}
-
-	usableCapital -= BG_Weapon( *weapon )->price;
-
-	//now test to see if we already have all of these items
-	//check if we already have everything
-	if ( BG_InventoryContainsWeapon( ( int )*weapon, self->client->ps.stats ) )
-	{
-		int numContain = 0;
-		int i;
-
-		for ( i = 0; i < *numUpgrades; i++ )
+		// buy armor if one of following is true:
+		// * already worn (assumed that armors are sorted by preference)
+		// * better (more expensive), authorized, and have the slots
+		if ( BG_InventoryContainsUpgrade( armor.item, self->client->ps.stats ) ||
+				( armor.canBuyNow() && usableCapital >= armor.price()
+				&& ( usedSlots & armor.slots() ) == 0 ) )
 		{
-			if ( BG_InventoryContainsUpgrade( ( int )upgrades[i], self->client->ps.stats ) )
-			{
-				numContain++;
-			}
-		}
-
-		if ( numContain == *numUpgrades )
-		{
-			*numUpgrades = 0;
-			for ( i = 0; i < 3; i++ )
-			{
-				upgrades[i] = UP_NONE;
-			}
-			*weapon = WP_NONE;
+			upgrades[numUpgrades] = armor.item;
+			usableCapital -= armor.price();
+			usedSlots |= armor.slots();
+			numUpgrades++;
+			break;
 		}
 	}
+
+	//TODO this really needs more generic code, but that would require
+	//deeper refactoring (probably move equipments and classes into structs)
+	//and code to make bots _actually_ use other equipments.
+	int nbTeam = level.team[ G_Team( self ) ].numClients;
+	int nbRadars = numTeamUpgrades[UP_RADAR];
+	bool teamNeedsRadar = 100 * ( 1 + nbRadars ) / nbTeam < 75;
+
+	// others[0] is radar, buying this utility makes sense even if one can't buy
+	// a better weapon, because it helps the whole team.
+	if ( numUpgrades > 0 && teamNeedsRadar
+			&& others[0].canBuyNow() && usableCapital >= others[0].price()
+			&& ( usedSlots & others[0].slots() ) == 0
+			&& numUpgrades < upgradesSize )
+	{
+		upgrades[numUpgrades] = others[0].item;
+		usableCapital -= others[0].price();
+		usedSlots |= others[0].slots();
+		numUpgrades ++;
+	}
+
+	for ( auto const &wp : weapons )
+	{
+		if ( wp.canBuyNow() && usableCapital >= wp.price()
+				&& ( usedSlots & wp.slots() ) == 0 )
+		{
+			if ( wp.item == WP_FLAMER && numTeamWeapons[WP_FLAMER] > numTeamWeapons[WP_PULSE_RIFLE] )
+			{
+				continue;
+			}
+			weapon = wp.item;
+			usableCapital -= wp.price();
+			break;
+		}
+	}
+
+	for ( auto const &tool : others )
+	{
+		// skip radar checks, since already done
+		if ( tool.item == others[0].item )
+		{
+			continue;
+		}
+		if ( tool.canBuyNow() && usableCapital >= tool.price()
+				&& ( usedSlots & tool.slots() ) == 0
+				&& numUpgrades < upgradesSize )
+		{
+			upgrades[numUpgrades] = tool.item;
+			usableCapital -= tool.price();
+			usedSlots |= tool.slots();
+			numUpgrades ++;
+		}
+	}
+	return numUpgrades;
 }
 
 /*
@@ -449,8 +679,9 @@ gentity_t* BotFindBuilding( gentity_t *self, int buildingType, int range )
 		{
 			continue;
 		}
-		if ( target->s.eType == entityType_t::ET_BUILDABLE && target->s.modelindex == buildingType &&
-		     ( target->buildableTeam == TEAM_ALIENS || ( target->powered && target->spawned ) ) &&
+		if ( target->s.eType == entityType_t::ET_BUILDABLE &&
+		     target->s.modelindex == buildingType &&
+		     target->powered && target->spawned &&
 		     Entities::IsAlive( target ) )
 		{
 			newDistance = DistanceSquared( self->s.origin, target->s.origin );
@@ -477,32 +708,32 @@ void BotFindClosestBuildings( gentity_t *self )
 	for ( unsigned i = 0; i < ARRAY_LEN( self->botMind->closestBuildings ); i++ )
 	{
 		self->botMind->closestBuildings[ i ].ent = nullptr;
-		self->botMind->closestBuildings[ i ].distance = INT_MAX;
+		self->botMind->closestBuildings[ i ].distance = std::numeric_limits<float>::max();
 	}
 
 	for ( testEnt = &g_entities[MAX_CLIENTS]; testEnt < &g_entities[level.num_entities - 1]; testEnt++ )
 	{
 		float newDist;
-		//ignore entities that arnt in use
+		// ignore entities that aren't in use
 		if ( !testEnt->inuse )
 		{
 			continue;
 		}
 
-		//skip non buildings
+		// skip non buildings
 		if ( testEnt->s.eType != entityType_t::ET_BUILDABLE )
 		{
 			continue;
 		}
 
-		//ignore dead targets
+		// ignore dead targets
 		if ( Entities::IsDead( testEnt ) )
 		{
 			continue;
 		}
 
-		//skip human buildings that are currently building or arn't powered
-		if ( testEnt->buildableTeam == TEAM_HUMANS && ( !testEnt->powered || !testEnt->spawned ) )
+		// skip buildings that are currently building or aren't powered
+		if ( !testEnt->powered || !testEnt->spawned )
 		{
 			continue;
 		}
@@ -525,7 +756,7 @@ void BotFindDamagedFriendlyStructure( gentity_t *self )
 
 	gentity_t *target;
 	self->botMind->closestDamagedBuilding.ent = nullptr;
-	self->botMind->closestDamagedBuilding.distance = INT_MAX;
+	self->botMind->closestDamagedBuilding.distance = std::numeric_limits<float>::max();
 
 	minDistSqr = Square( self->botMind->closestDamagedBuilding.distance );
 
@@ -567,27 +798,27 @@ void BotFindDamagedFriendlyStructure( gentity_t *self )
 		if ( distSqr < minDistSqr )
 		{
 			self->botMind->closestDamagedBuilding.ent = target;
-			self->botMind->closestDamagedBuilding.distance = sqrt( distSqr );
+			self->botMind->closestDamagedBuilding.distance = sqrtf( distSqr );
 			minDistSqr = distSqr;
 		}
 	}
 }
 
-bool BotEntityIsVisible( gentity_t *self, gentity_t *target, int mask )
+bool BotEntityIsVisible( const gentity_t *self, gentity_t *target, int mask )
 {
 	botTarget_t bt;
-	BotSetTarget( &bt, target, nullptr );
+	bt = target;
 	return BotTargetIsVisible( self, bt, mask );
 }
 
 gentity_t* BotFindBestEnemy( gentity_t *self )
 {
-	float bestVisibleEnemyScore = 0;
-	float bestInvisibleEnemyScore = 0;
+	float bestVisibleEnemyScore = 0.0f;
+	float bestInvisibleEnemyScore = 0.0f;
 	gentity_t *bestVisibleEnemy = nullptr;
 	gentity_t *bestInvisibleEnemy = nullptr;
 	gentity_t *target;
-	team_t    team = BotGetEntityTeam( self );
+	team_t    team = G_Team( self );
 	bool  hasRadar = ( team == TEAM_ALIENS ) ||
 	                     ( team == TEAM_HUMANS && BG_InventoryContainsUpgrade( UP_RADAR, self->client->ps.stats ) );
 
@@ -595,7 +826,7 @@ gentity_t* BotFindBestEnemy( gentity_t *self )
 	{
 		float newScore;
 
-		if ( !BotEnemyIsValid( self, target ) )
+		if ( !BotEntityIsValidEnemyTarget( self, target ) )
 		{
 			continue;
 		}
@@ -606,12 +837,12 @@ gentity_t* BotFindBestEnemy( gentity_t *self )
 		}
 
 		if ( target->s.eType == entityType_t::ET_PLAYER && self->client->pers.team == TEAM_HUMANS
-		    && BotAimAngle( self, target->s.origin ) > g_bot_fov.value / 2 )
+		    && BotAimAngle( self, target->s.origin ) > g_bot_fov.Get() / 2 )
 		{
 			continue;
 		}
 
-		if ( target == self->botMind->goal.ent )
+		if ( target == self->botMind->goal.getTargetedEntity() )
 		{
 			continue;
 		}
@@ -655,47 +886,11 @@ gentity_t* BotFindClosestEnemy( gentity_t *self )
 			continue;
 		}
 
-		// Only consider living targets.
-		if ( !Entities::IsAlive( target ) )
+		if ( !BotEntityIsValidEnemyTarget( self, target ) )
 		{
 			continue;
 		}
 
-		//ignore buildings if we cant attack them
-		if ( target->s.eType == entityType_t::ET_BUILDABLE )
-		{
-			if ( !g_bot_attackStruct.integer )
-			{
-				continue;
-			}
-
-			// dretches can only bite buildables in construction
-			if ( self->client->ps.stats[STAT_CLASS] == PCL_ALIEN_LEVEL0 && target->spawned )
-			{
-				continue;
-			}
-		}
-
-		//ignore neutrals
-		if ( BotGetEntityTeam( target ) == TEAM_NONE )
-		{
-			continue;
-		}
-
-		//ignore teamates
-		if ( BotGetEntityTeam( target ) == BotGetEntityTeam( self ) )
-		{
-			continue;
-		}
-
-		//ignore spectators
-		if ( target->client )
-		{
-			if ( target->client->sess.spectatorState != SPECTATOR_NOT )
-			{
-				continue;
-			}
-		}
 		newDistance = DistanceSquared( self->s.origin, target->s.origin );
 		if ( newDistance <= minDistance )
 		{
@@ -706,11 +901,11 @@ gentity_t* BotFindClosestEnemy( gentity_t *self )
 	return closestEnemy;
 }
 
-botTarget_t BotGetRushTarget( gentity_t *self )
+botTarget_t BotGetRushTarget( const gentity_t *self )
 {
 	botTarget_t target;
-	gentity_t* rushTarget = nullptr;
-	if ( BotGetEntityTeam( self ) == TEAM_HUMANS )
+	gentity_t const* rushTarget = nullptr;
+	if ( G_Team( self ) == TEAM_HUMANS )
 	{
 		if ( self->botMind->closestBuildings[BA_A_SPAWN].ent )
 		{
@@ -732,14 +927,14 @@ botTarget_t BotGetRushTarget( gentity_t *self )
 			rushTarget = self->botMind->closestBuildings[BA_H_REACTOR].ent;
 		}
 	}
-	BotSetTarget( &target, rushTarget, nullptr );
+	target = rushTarget;
 	return target;
 }
 
-botTarget_t BotGetRetreatTarget( gentity_t *self )
+botTarget_t BotGetRetreatTarget( const gentity_t *self )
 {
 	botTarget_t target;
-	gentity_t* retreatTarget = nullptr;
+	gentity_t const* retreatTarget = nullptr;
 	//FIXME, this seems like it could be done better...
 	if ( self->client->pers.team == TEAM_HUMANS )
 	{
@@ -755,17 +950,17 @@ botTarget_t BotGetRetreatTarget( gentity_t *self )
 			retreatTarget = self->botMind->closestBuildings[BA_A_OVERMIND].ent;
 		}
 	}
-	BotSetTarget( &target, retreatTarget, nullptr );
+	target = retreatTarget;
 	return target;
 }
 
-botTarget_t BotGetRoamTarget( gentity_t *self )
+botTarget_t BotGetRoamTarget( const gentity_t *self )
 {
 	botTarget_t target;
 	vec3_t targetPos;
 
 	BotFindRandomPointOnMesh( self, targetPos );
-	BotSetTarget( &target, nullptr, targetPos );
+	target = targetPos;
 	return target;
 }
 
@@ -775,137 +970,89 @@ BotTarget Helpers
 ========================
 */
 
-void BotSetTarget( botTarget_t *target, gentity_t *ent, vec3_t pos )
+static void BotTargetGetBoundingBox( botTarget_t target, vec3_t mins, vec3_t maxs, botRouteTarget_t *routeTarget )
 {
-	if ( ent )
-	{
-		target->ent = ent;
-		VectorClear( target->coord );
-		target->inuse = true;
-	}
-	else if ( pos )
-	{
-		target->ent = nullptr;
-		VectorCopy( pos, target->coord );
-		target->inuse = true;
-	}
-	else
-	{
-		target->ent = nullptr;
-		VectorClear( target->coord );
-		target->inuse = false;
-	}
-}
+	ASSERT( target.isValid() );
 
-bool BotTargetIsEntity( botTarget_t target )
-{
-	return ( target.ent && target.ent->inuse );
-}
-
-bool BotTargetIsPlayer( botTarget_t target )
-{
-	return ( target.ent && target.ent->inuse && target.ent->client );
-}
-
-int BotGetTargetEntityNumber( botTarget_t target )
-{
-	if ( BotTargetIsEntity( target ) )
-	{
-		return target.ent->s.number;
-	}
-	else
-	{
-		return ENTITYNUM_NONE;
-	}
-}
-
-void BotGetTargetPos( botTarget_t target, vec3_t rVec )
-{
-	if ( BotTargetIsEntity( target ) )
-	{
-		VectorCopy( target.ent->s.origin, rVec );
-	}
-	else
-	{
-		VectorCopy( target.coord, rVec );
-	}
-}
-
-void BotTargetToRouteTarget( gentity_t *self, botTarget_t target, botRouteTarget_t *routeTarget )
-{
-	vec3_t mins, maxs;
-	int i;
-
-	if ( BotTargetIsEntity( target ) )
-	{
-		if ( target.ent->client )
-		{
-			BG_ClassBoundingBox( ( class_t ) target.ent->client->ps.stats[ STAT_CLASS ], mins, maxs, nullptr, nullptr, nullptr );
-		}
-		else if ( target.ent->s.eType == entityType_t::ET_BUILDABLE )
-		{
-			BG_BuildableBoundingBox( ( buildable_t ) target.ent->s.modelindex, mins, maxs );
-		}
-		else
-		{
-			VectorCopy( target.ent->r.mins, mins );
-			VectorCopy( target.ent->r.maxs, maxs );
-		}
-
-		if ( BotTargetIsPlayer( target ) )
-		{
-			routeTarget->type = botRouteTargetType_t::BOT_TARGET_DYNAMIC;
-		}
-		else
-		{
-			routeTarget->type = botRouteTargetType_t::BOT_TARGET_STATIC;
-		}
-	}
-	else
+	if ( target.targetsCoordinates() )
 	{
 		// point target
 		VectorSet( maxs, 96, 96, 96 );
 		VectorSet( mins, -96, -96, -96 );
 		routeTarget->type = botRouteTargetType_t::BOT_TARGET_STATIC;
+		return;
 	}
-	
-	for ( i = 0; i < 3; i++ )
+
+	// entity
+	const gentity_t *ent = target.getTargetedEntity();
+	bool isPlayer = ent->client != nullptr;
+	if ( isPlayer )
+	{
+		class_t class_ = static_cast<class_t>( ent->client->ps.stats[ STAT_CLASS ] );
+		BG_ClassBoundingBox( class_, mins, maxs, nullptr, nullptr, nullptr );
+	}
+	else if ( target.getTargetType() == entityType_t::ET_BUILDABLE )
+	{
+		BG_BuildableBoundingBox( ( buildable_t ) ent->s.modelindex, mins, maxs );
+	}
+	else
+	{
+		VectorCopy( ent->r.mins, mins );
+		VectorCopy( ent->r.maxs, maxs );
+	}
+
+	if ( isPlayer )
+	{
+		routeTarget->type = botRouteTargetType_t::BOT_TARGET_DYNAMIC;
+	}
+	else
+	{
+		routeTarget->type = botRouteTargetType_t::BOT_TARGET_STATIC;
+	}
+}
+
+void BotTargetToRouteTarget( const gentity_t *self, botTarget_t target, botRouteTarget_t *routeTarget )
+{
+	ASSERT( target.isValid() );
+
+	vec3_t mins, maxs;
+
+	target.getPos( routeTarget->pos );
+	BotTargetGetBoundingBox( target, mins, maxs, routeTarget );
+
+	for ( int i = 0; i < 3; i++ )
 	{
 		routeTarget->polyExtents[ i ] = std::max( Q_fabs( mins[ i ] ), maxs[ i ] );
 	}
-
-	BotGetTargetPos( target, routeTarget->pos );
 
 	// move center a bit lower so we don't get polys above the object
 	// and get polys below the object on a slope
 	routeTarget->pos[ 2 ] -= routeTarget->polyExtents[ 2 ] / 2;
 
-	// account for buildings on walls or cielings
-	if ( BotTargetIsEntity( target ) )
+	entityType_t entType = target.getTargetType();
+
+	// account for building on wall or ceiling
+	if ( entType == entityType_t::ET_PLAYER ||
+			( entType == entityType_t::ET_BUILDABLE
+			  && target.getTargetedEntity()->s.origin2[ 2 ] < MIN_WALK_NORMAL ) )
 	{
-		if ( target.ent->s.eType == entityType_t::ET_BUILDABLE || target.ent->s.eType == entityType_t::ET_PLAYER )
-		{
-			// building on wall or cieling ( 0.7 == MIN_WALK_NORMAL )
-			if ( target.ent->s.origin2[ 2 ] < 0.7 || target.ent->s.eType == entityType_t::ET_PLAYER )
-			{
-				vec3_t targetPos;
-				vec3_t end;
-				vec3_t invNormal = { 0, 0, -1 };
-				trace_t trace;
+		vec3_t targetPos;
+		vec3_t end;
+		vec3_t invNormal = { 0, 0, -1 };
+		trace_t trace;
 
-				routeTarget->polyExtents[ 0 ] += 25;
-				routeTarget->polyExtents[ 1 ] += 25;
-				routeTarget->polyExtents[ 2 ] += 300;
+		routeTarget->polyExtents[ 0 ] += 25;
+		routeTarget->polyExtents[ 1 ] += 25;
+		routeTarget->polyExtents[ 2 ] += 300;
 
-				// try to find a position closer to the ground
-				BotGetTargetPos( target, targetPos );
-				VectorMA( targetPos, 600, invNormal, end );
-				trap_Trace( &trace, targetPos, mins, maxs, end, target.ent->s.number,
-				            CONTENTS_SOLID, MASK_ENTITY );
-				VectorCopy( trace.endpos, routeTarget->pos );
-			}
-		}
+		// try to find a position closer to the ground
+		target.getPos( targetPos );
+		VectorMA( targetPos, 600, invNormal, end );
+		trap_Trace( &trace, targetPos, mins, maxs, end, target.getTargetedEntity()->s.number,
+		            CONTENTS_SOLID, MASK_ENTITY );
+		VectorCopy( trace.endpos, routeTarget->pos );
 	}
+	
 
 	// increase extents a little to account for obstacles cutting into the navmesh
 	// also accounts for navmesh erosion at mesh boundrys
@@ -913,53 +1060,9 @@ void BotTargetToRouteTarget( gentity_t *self, botTarget_t target, botRouteTarget
 	routeTarget->polyExtents[ 1 ] += self->r.maxs[ 1 ] + 10;
 }
 
-team_t BotGetEntityTeam( gentity_t *ent )
-{
-	if ( !ent )
-	{
-		return TEAM_NONE;
-	}
-	if ( ent->client )
-	{
-		return ( team_t )ent->client->pers.team;
-	}
-	else if ( ent->s.eType == entityType_t::ET_BUILDABLE )
-	{
-		return ent->buildableTeam;
-	}
-	else
-	{
-		return TEAM_NONE;
-	}
-}
-
-team_t BotGetTargetTeam( botTarget_t target )
-{
-	if ( BotTargetIsEntity( target ) )
-	{
-		return BotGetEntityTeam( target.ent );
-	}
-	else
-	{
-		return TEAM_NONE;
-	}
-}
-
-entityType_t BotGetTargetType( botTarget_t target )
-{
-	if ( BotTargetIsEntity( target ) )
-	{
-		return target.ent->s.eType;
-	}
-	else
-	{
-		return Util::enum_cast<entityType_t>(-1);
-	}
-}
-
 bool BotChangeGoal( gentity_t *self, botTarget_t target )
 {
-	if ( !target.inuse )
+	if ( !target.isValid() )
 	{
 		return false;
 	}
@@ -974,22 +1077,24 @@ bool BotChangeGoal( gentity_t *self, botTarget_t target )
 	return true;
 }
 
-bool BotChangeGoalEntity( gentity_t *self, gentity_t *goal )
+bool BotChangeGoalEntity( gentity_t *self, gentity_t const *goal )
 {
 	botTarget_t target;
-	BotSetTarget( &target, goal, nullptr );
+	target = goal;
 	return BotChangeGoal( self, target );
 }
 
 bool BotChangeGoalPos( gentity_t *self, vec3_t goal )
 {
 	botTarget_t target;
-	BotSetTarget( &target, nullptr, goal );
+	target = goal;
 	return BotChangeGoal( self, target );
 }
 
-bool BotTargetInAttackRange( gentity_t *self, botTarget_t target )
+bool BotTargetInAttackRange( const gentity_t *self, botTarget_t target )
 {
+	ASSERT( target.targetsValidEntity() );
+
 	float range, secondaryRange;
 	vec3_t forward, right, up;
 	vec3_t muzzle;
@@ -1000,7 +1105,7 @@ bool BotTargetInAttackRange( gentity_t *self, botTarget_t target )
 
 	AngleVectors( self->client->ps.viewangles, forward, right, up );
 	G_CalcMuzzlePoint( self, forward, right, up , muzzle );
-	BotGetTargetPos( target, targetPos );
+	target.getPos( targetPos );
 	switch ( self->client->ps.weapon )
 	{
 		case WP_ABUILD:
@@ -1106,8 +1211,8 @@ bool BotTargetInAttackRange( gentity_t *self, botTarget_t target )
 				// FIXME: depend on the value of the flamer damage falloff cvar
 				// FIXME: have to stand further away from acid or will be
 				//        pushed back and will stop attacking (too far away)
-				if ( BotGetTargetType( target ) == entityType_t::ET_BUILDABLE &&
-				     target.ent->s.modelindex != BA_A_ACIDTUBE )
+				if ( target.getTargetType() == entityType_t::ET_BUILDABLE &&
+				     target.getTargetedEntity()->s.modelindex != BA_A_ACIDTUBE )
 				{
 					range -= 300;
 				}
@@ -1141,8 +1246,8 @@ bool BotTargetInAttackRange( gentity_t *self, botTarget_t target )
 
 	trap_Trace( &trace, muzzle, mins, maxs, targetPos, self->s.number, MASK_SHOT, 0 );
 
-	if ( self->client->pers.team != BotGetEntityTeam( &g_entities[trace.entityNum] )
-		&& BotGetEntityTeam( &g_entities[ trace.entityNum ] ) != TEAM_NONE
+	if ( self->client->pers.team != G_Team( &g_entities[trace.entityNum] )
+		&& G_Team( &g_entities[ trace.entityNum ] ) != TEAM_NONE
 		&& Distance( muzzle, trace.endpos ) <= std::max( range, secondaryRange ) )
 	{
 		return true;
@@ -1153,15 +1258,57 @@ bool BotTargetInAttackRange( gentity_t *self, botTarget_t target )
 	}
 }
 
-bool BotTargetIsVisible( gentity_t *self, botTarget_t target, int mask )
+bool BotEntityIsValidTarget( const gentity_t *ent )
 {
+	// spectators are not considered alive
+	return ent != nullptr && ent->inuse && Entities::IsAlive(ent);
+}
+
+bool BotEntityIsValidEnemyTarget( const gentity_t *self, const gentity_t *enemy )
+{
+	if ( !BotEntityIsValidTarget( enemy ) )
+	{
+		return false;
+	}
+
+	// ignore neutrals
+	if ( G_Team( enemy ) == TEAM_NONE )
+	{
+		return false;
+	}
+
+	// ignore teamates
+	if ( G_OnSameTeam( self, enemy ) )
+	{
+		return false;
+	}
+
+	// ignore buildings if we can't attack them
+	if ( enemy->s.eType == entityType_t::ET_BUILDABLE && !g_bot_attackStruct.Get() )
+	{
+		return false;
+	}
+
+	// dretch limitations
+	if ( self->client->ps.stats[STAT_CLASS] == PCL_ALIEN_LEVEL0 && !G_DretchCanDamageEntity( self, enemy ) )
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool BotTargetIsVisible( const gentity_t *self, botTarget_t target, int mask )
+{
+	ASSERT( target.targetsValidEntity() );
+
 	trace_t trace;
 	vec3_t  muzzle, targetPos;
 	vec3_t  forward, right, up;
 
 	AngleVectors( self->client->ps.viewangles, forward, right, up );
 	G_CalcMuzzlePoint( self, forward, right, up, muzzle );
-	BotGetTargetPos( target, targetPos );
+	target.getPos( targetPos );
 
 	if ( !trap_InPVS( muzzle, targetPos ) )
 	{
@@ -1177,8 +1324,9 @@ bool BotTargetIsVisible( gentity_t *self, botTarget_t target, int mask )
 	}
 
 	//target is in range
-	if ( ( trace.entityNum == BotGetTargetEntityNumber( target ) || trace.fraction == 1.0f ) &&
-	     !trace.startsolid )
+	if ( ( trace.entityNum == target.getTargetedEntity()->s.number
+				|| trace.fraction == 1.0f )
+			&& !trace.startsolid )
 	{
 		return true;
 	}
@@ -1193,43 +1341,71 @@ Bot Aiming
 
 void BotGetIdealAimLocation( gentity_t *self, botTarget_t target, vec3_t aimLocation )
 {
-	//get the position of the target
-	BotGetTargetPos( target, aimLocation );
+	ASSERT( target.targetsValidEntity() );
 
-	if ( BotGetTargetType( target ) != entityType_t::ET_BUILDABLE && BotTargetIsEntity( target ) && BotGetTargetTeam( target ) == TEAM_HUMANS )
+	target.getPos( aimLocation );
+	const gentity_t *targetEnt = target.getTargetedEntity();
+	team_t targetTeam = G_Team( targetEnt );
+	bool isTargetBuildable = target.getTargetType() == entityType_t::ET_BUILDABLE;
+
+	//this retrieves the target's species, to aim at weak point:
+	// * for humans, it's the head (but code only applies an offset here, with the hope it's the head)
+	// * for aliens, there is no weak point, and human bots try to take missile's speed into consideration (for luci)
+	if ( !isTargetBuildable && targetTeam == TEAM_HUMANS )
 	{
-
 		//aim at head
-		aimLocation[2] += target.ent->r.maxs[2] * 0.85;
+		//FIXME: do not rely on hard-coded offset but evaluate which point have lower armor
+		aimLocation[2] += targetEnt->r.maxs[2] * 0.85;
 
 	}
-	else if ( BotGetTargetType( target ) == entityType_t::ET_BUILDABLE || BotGetTargetTeam( target ) == TEAM_ALIENS )
+	else if ( isTargetBuildable || targetTeam == TEAM_ALIENS )
 	{
-		//make lucifer cannons aim ahead based on the target's velocity
-		if ( self->client->ps.weapon == WP_LUCIFER_CANNON && self->botMind->botSkill.level >= 5 )
+		//make lucifer cannons (& other slow human weapons, maybe aliens would need it, too?) aim ahead based on the target's velocity
+		if ( self->botMind->botSkill.level >= 5 )
 		{
-			VectorMA( aimLocation, Distance( self->s.origin, aimLocation ) / LCANNON_SPEED, target.ent->s.pos.trDelta, aimLocation );
+			//would be better if it was possible to do self.weapon->speed directly
+			int weapon_speed = 0;
+			switch ( self->client->ps.weapon ) {
+			case WP_BLASTER:
+				weapon_speed = BLASTER_SPEED;
+				break;
+			case WP_FLAMER:
+				weapon_speed = FLAMER_SPEED;
+				break;
+			case WP_PULSE_RIFLE:
+				weapon_speed = PRIFLE_SPEED;
+				break;
+			case WP_LUCIFER_CANNON:
+				weapon_speed = LCANNON_SPEED;
+				break;
+			}
+			if( weapon_speed )
+			{
+				VectorMA( aimLocation, Distance( self->s.origin, aimLocation ) / weapon_speed, targetEnt->s.pos.trDelta, aimLocation );
+			}
 		}
 	}
 }
 
 int BotGetAimPredictionTime( gentity_t *self )
 {
-	auto time = ( 10 - self->botMind->botSkill.level ) * 100 * std::max( ( ( float ) rand() ) / RAND_MAX, 0.5f );
+	auto time = ( 10 - self->botMind->botSkill.level ) * 100 * std::max( random(), 0.5f );
 	return std::max( 1, int(time) );
 }
 
-void BotPredictPosition( gentity_t *self, gentity_t *predict, vec3_t pos, int time )
+void BotPredictPosition( gentity_t *self, gentity_t const *predict, vec3_t pos, int time )
 {
 	botTarget_t target;
 	vec3_t aimLoc;
-	BotSetTarget( &target, predict, nullptr );
+	target = predict;
 	BotGetIdealAimLocation( self, target, aimLoc );
 	VectorMA( aimLoc, time / 1000.0f, predict->s.apos.trDelta, pos );
 }
 
 void BotAimAtEnemy( gentity_t *self )
 {
+	ASSERT( self->botMind->goal.targetsValidEntity() );
+
 	vec3_t desired;
 	vec3_t current;
 	vec3_t viewOrigin;
@@ -1237,7 +1413,7 @@ void BotAimAtEnemy( gentity_t *self )
 	vec3_t angles;
 	int i;
 	float frac;
-	gentity_t *enemy = self->botMind->goal.ent;
+	const gentity_t *enemy = self->botMind->goal.getTargetedEntity();
 
 	if ( self->botMind->futureAimTime < level.time )
 	{
@@ -1298,31 +1474,29 @@ void BotSlowAim( gentity_t *self, vec3_t target, float slowAmount )
 	vec3_t viewBase;
 	vec3_t aimVec, forward;
 	vec3_t skilledVec;
-	float length;
-	float slow;
-	float cosAngle;
 
 	if ( !( self && self->client ) )
 	{
 		return;
 	}
-	//clamp to 0-1
-	slow = Com_Clamp( 0.1f, 1.0, slowAmount );
+
+	//clamp from 0.1 to 1
+	float slow = Math::Clamp( slowAmount, 0.1f, 1.0f );
 
 	//get the point that the bot is aiming from
 	BG_GetClientViewOrigin( &self->client->ps, viewBase );
 
 	//get the Vector from the bot to the enemy (ideal aim Vector)
 	VectorSubtract( target, viewBase, aimVec );
-	length = VectorNormalize( aimVec );
+	float length = VectorNormalize( aimVec );
 
 	//take the current aim Vector
 	AngleVectors( self->client->ps.viewangles, forward, nullptr, nullptr );
 
-	cosAngle = DotProduct( forward, aimVec );
-	cosAngle = ( cosAngle + 1 ) / 2;
-	cosAngle = 1 - cosAngle;
-	cosAngle = Com_Clamp( 0.1, 0.5, cosAngle );
+	float cosAngle = DotProduct( forward, aimVec );
+	cosAngle = ( cosAngle + 1.0f ) / 2.0f;
+	cosAngle = 1.0f - cosAngle;
+	cosAngle = Math::Clamp( cosAngle, 0.1f, 0.5f );
 	VectorLerp( forward, aimVec, slow * ( cosAngle ), skilledVec );
 
 	//now find a point to return, this point will be aimed at
@@ -1431,6 +1605,39 @@ bool PlayersBehindBotInSpawnQueue( gentity_t *self )
 	}
 }
 
+// Initializes numUpgrades and numWeapons arrays with team's current equipment
+// pre-condition:
+// * self points to a player which is inside a playable team
+// * numUpgrades memory is initialized
+// * numWeapons memory is initialized
+static void ListTeamEquipment( gentity_t *self, unsigned int (&numUpgrades)[UP_NUM_UPGRADES], unsigned int (&numWeapons)[WP_NUM_WEAPONS] )
+{
+	ASSERT( self );
+	const team_t team = static_cast<team_t>( self->client->pers.team );
+
+	ForEntities<HumanClassComponent>([&](Entity& ent, HumanClassComponent&) {
+		gentity_t* ally = ent.oldEnt;
+		if ( ally == self || ally->client->pers.team != team )
+		{
+			return;
+		}
+		++numWeapons[ally->client->ps.stats[STAT_WEAPON]];
+
+		// for all possible upgrades, check if current player already have it.
+		// this is very fragile, at best, since it will break if TEAM_ALIENS becomes
+		// able to have upgrades. Class is not considered, neither.
+		// last but not least, it's playing with bits.
+		int stat = ally->client->ps.stats[STAT_ITEMS];
+		for ( int up = UP_NONE + 1; up < UP_NUM_UPGRADES; ++up )
+		{
+			if ( stat & ( 1 << up ) )
+			{
+				++numUpgrades[up];
+			}
+		}
+	});
+}
+
 bool BotTeamateHasWeapon( gentity_t *self, int weapon )
 {
 	int botNumbers[MAX_CLIENTS];
@@ -1470,7 +1677,7 @@ void BotFireWeapon( weaponMode_t mode, usercmd_t *botCmdBuffer )
 	}
 	else if ( mode == WPM_TERTIARY )
 	{
-		usercmdPressButton( botCmdBuffer->buttons, BUTTON_USE_HOLDABLE );
+		usercmdPressButton( botCmdBuffer->buttons, BUTTON_ATTACK3 );
 	}
 }
 void BotClassMovement( gentity_t *self, bool inAttackRange )
@@ -1498,7 +1705,7 @@ void BotClassMovement( gentity_t *self, bool inAttackRange )
 		case PCL_ALIEN_LEVEL3:
 			break;
 		case PCL_ALIEN_LEVEL3_UPG:
-			if ( BotGetTargetType( self->botMind->goal ) == entityType_t::ET_BUILDABLE && self->client->ps.ammo > 0
+			if ( self->botMind->goal.getTargetType() == entityType_t::ET_BUILDABLE && self->client->ps.ammo > 0
 				&& inAttackRange )
 			{
 				//dont move when sniping buildings
@@ -1529,7 +1736,7 @@ float CalcAimPitch( gentity_t *self, botTarget_t target, vec_t launchSpeed )
 	float check;
 	float angle1, angle2, angle;
 
-	BotGetTargetPos( target, targetPos );
+	target.getPos( targetPos );
 	AngleVectors( self->s.origin, forward, right, up );
 	G_CalcMuzzlePoint( self, forward, right, up, muzzle );
 	VectorCopy( muzzle, startPos );
@@ -1538,7 +1745,7 @@ float CalcAimPitch( gentity_t *self, botTarget_t target, vec_t launchSpeed )
 	initialHeight = startPos[2];
 	targetPos[2] -= initialHeight;
 	startPos[2] -= initialHeight;
-	distance2D = sqrt( Square( startPos[0] - targetPos[0] ) + Square( startPos[1] - targetPos[1] ) );
+	distance2D = sqrtf( Square( startPos[0] - targetPos[0] ) + Square( startPos[1] - targetPos[1] ) );
 	targetPos[0] = distance2D;
 
 	//for readability's sake
@@ -1559,11 +1766,11 @@ float CalcAimPitch( gentity_t *self, botTarget_t target, vec_t launchSpeed )
 	}
 
 	//calculate required angle of launch
-	angle1 = atanf( ( Square( v ) + sqrt( check ) ) / ( g * x ) );
-	angle2 = atanf( ( Square( v ) - sqrt( check ) ) / ( g * x ) );
+	angle1 = atanf( ( Square( v ) + sqrtf( check ) ) / ( g * x ) );
+	angle2 = atanf( ( Square( v ) - sqrtf( check ) ) / ( g * x ) );
 
 	//take the smaller angle
-	angle = ( angle1 < angle2 ) ? angle1 : angle2;
+	angle = std::min( angle1, angle2 );
 
 	//convert to degrees (ps.viewangles units)
 	angle = RAD2DEG( angle );
@@ -1601,6 +1808,7 @@ void BotFireWeaponAI( gentity_t *self )
 
 	trap_Trace( &trace, muzzle, nullptr, nullptr, targetPos, ENTITYNUM_NONE, MASK_SHOT, 0 );
 	distance = Distance( muzzle, trace.endpos );
+	bool readyFire = self->client->ps.IsWeaponReady();
 	switch ( self->s.weapon )
 	{
 		case WP_ABUILD:
@@ -1626,11 +1834,11 @@ void BotFireWeaponAI( gentity_t *self )
 		case WP_ALEVEL0:
 			break; //auto hit
 		case WP_ALEVEL1:
-			if ( distance < LEVEL1_CLAW_RANGE )
+			if ( distance < LEVEL1_CLAW_RANGE && readyFire )
 			{
 				BotFireWeapon( WPM_PRIMARY, botCmdBuffer ); //mantis swipe
 			}
-			else if ( self->client->ps.stats[ STAT_MISC ] == 0 )
+			else if ( self->client->ps.weaponCharge == 0 )
 			{
 				BotMoveInDir( self, MOVE_FORWARD );
 				BotFireWeapon( WPM_SECONDARY, botCmdBuffer ); //mantis forward pounce
@@ -1650,7 +1858,7 @@ void BotFireWeaponAI( gentity_t *self )
 			}
 			break;
 		case WP_ALEVEL3:
-			if ( distance > LEVEL3_CLAW_RANGE && self->client->ps.stats[ STAT_MISC ] < LEVEL3_POUNCE_TIME )
+			if ( distance > LEVEL3_CLAW_RANGE && self->client->ps.weaponCharge < LEVEL3_POUNCE_TIME )
 			{
 				botCmdBuffer->angles[PITCH] = ANGLE2SHORT( -CalcPounceAimPitch( self, self->botMind->goal ) ); //compute and apply correct aim pitch to hit target
 				BotFireWeapon( WPM_SECONDARY, botCmdBuffer ); //goon pounce
@@ -1666,7 +1874,7 @@ void BotFireWeaponAI( gentity_t *self )
 				botCmdBuffer->angles[PITCH] = ANGLE2SHORT( -CalcBarbAimPitch( self, self->botMind->goal ) ); //compute and apply correct aim pitch to hit target
 				BotFireWeapon( WPM_TERTIARY, botCmdBuffer ); //goon barb
 			}
-			else if ( distance > LEVEL3_CLAW_UPG_RANGE && self->client->ps.stats[ STAT_MISC ] < LEVEL3_POUNCE_TIME_UPG )
+			else if ( distance > LEVEL3_CLAW_UPG_RANGE && self->client->ps.weaponCharge < LEVEL3_POUNCE_TIME_UPG )
 			{
 				botCmdBuffer->angles[PITCH] = ANGLE2SHORT( -CalcPounceAimPitch( self, self->botMind->goal ) ); //compute and apply correct aim pitch to hit target
 				BotFireWeapon( WPM_SECONDARY, botCmdBuffer ); //goon pounce
@@ -1677,7 +1885,7 @@ void BotFireWeaponAI( gentity_t *self )
 			}
 			break;
 		case WP_ALEVEL4:
-			if ( distance > LEVEL4_CLAW_RANGE && self->client->ps.stats[STAT_MISC] < LEVEL4_TRAMPLE_CHARGE_MAX )
+			if ( distance > LEVEL4_CLAW_RANGE && self->client->ps.weaponCharge < LEVEL4_TRAMPLE_CHARGE_MAX )
 			{
 				BotFireWeapon( WPM_SECONDARY, botCmdBuffer );    //rant charge
 			}
@@ -1687,7 +1895,7 @@ void BotFireWeaponAI( gentity_t *self )
 			}
 			break;
 		case WP_LUCIFER_CANNON:
-			if ( self->client->ps.stats[STAT_MISC] < LCANNON_CHARGE_TIME_MAX * Com_Clamp( 0.5, 1, random() ) )
+			if ( self->client->ps.weaponCharge < LCANNON_CHARGE_TIME_MAX * Math::Clamp( random(), 0.5f, 1.0f ) )
 			{
 				BotFireWeapon( WPM_PRIMARY, botCmdBuffer );
 			}
@@ -1697,13 +1905,27 @@ void BotFireWeaponAI( gentity_t *self )
 	}
 }
 
+static bool BotChangeClass( gentity_t *self, class_t newClass, vec3_t newOrigin )
+{
+	if ( !G_RoomForClassChange( self, newClass, newOrigin ) )
+	{
+		return false;
+	}
+	VectorCopy( newOrigin, self->client->ps.origin );
+	self->client->ps.stats[ STAT_CLASS ] = newClass;
+	self->client->pers.classSelection = newClass;
+	BotSetNavmesh( self, newClass );
+	self->client->ps.eFlags ^= EF_TELEPORT_BIT;
+	return true;
+}
+
 bool BotEvolveToClass( gentity_t *ent, class_t newClass )
 {
 	int clientNum;
 	int i;
 	vec3_t infestOrigin;
 	class_t currentClass = ent->client->pers.classSelection;
-	int numLevels;
+	evolveInfo_t evolveInfo;
 	int entityList[ MAX_GENTITIES ];
 	vec3_t range = { AS_OVER_RT3, AS_OVER_RT3, AS_OVER_RT3 };
 	vec3_t mins, maxs;
@@ -1746,45 +1968,24 @@ bool BotEvolveToClass( gentity_t *ent, class_t newClass )
 			return false;
 		}
 
-		numLevels = BG_ClassCanEvolveFromTo( currentClass, newClass, ( short )ent->client->ps.persistant[ PERS_CREDIT ] );
+		evolveInfo = BG_ClassEvolveInfoFromTo( currentClass, newClass );
 
-		if ( G_RoomForClassChange( ent, newClass, infestOrigin ) )
+		if ( G_RoomForClassChange( ent, newClass, infestOrigin ) && BotCanEvolveToClass( ent, newClass ) )
 		{
-			//...check we can evolve to that class
-			if ( numLevels >= 1 && BG_ClassUnlocked( newClass ) && !BG_ClassDisabled( newClass ) )
-			{
-				ent->client->pers.evolveHealthFraction = Entities::HealthFraction(ent);
+			ent->client->pers.evolveHealthFraction =
+				Math::Clamp( Entities::HealthFraction(ent), 0.0f, 1.0f );
 
-				if ( ent->client->pers.evolveHealthFraction < 0.0f )
-				{
-					ent->client->pers.evolveHealthFraction = 0.0f;
-				}
-				else if ( ent->client->pers.evolveHealthFraction > 1.0f )
-				{
-					ent->client->pers.evolveHealthFraction = 1.0f;
-				}
+			//remove credit
+			G_AddCreditToClient( ent->client, -( short )evolveInfo.evolveCost, true );
+			ent->client->pers.classSelection = newClass;
+			BotSetNavmesh( ent, newClass );
+			ClientUserinfoChanged( clientNum, false );
+			VectorCopy( infestOrigin, ent->s.pos.trBase );
+			ClientSpawn( ent, ent, ent->s.pos.trBase, ent->s.apos.trBase );
 
-				//remove credit
-				G_AddCreditToClient( ent->client, -( short )numLevels, true );
-				ent->client->pers.classSelection = newClass;
-				BotSetNavmesh( ent, newClass );
-				ClientUserinfoChanged( clientNum, false );
-				VectorCopy( infestOrigin, ent->s.pos.trBase );
-				ClientSpawn( ent, ent, ent->s.pos.trBase, ent->s.apos.trBase );
+			//trap_SendServerCommand( -1, va( "print \"evolved to %s\n\"", classname) );
 
-				//trap_SendServerCommand( -1, va( "print \"evolved to %s\n\"", classname) );
-
-				return true;
-			}
-			else
-				//trap_SendServerCommand( -1, va( "print \"Not enough evos to evolve to %s\n\"", classname) );
-			{
-				return false;
-			}
-		}
-		else
-		{
-			return false;
+			return true;
 		}
 	}
 	return false;
@@ -1843,6 +2044,7 @@ void BotBuyWeapon( gentity_t *self, weapon_t weapon )
 
 		//set build delay/pounce etc to 0
 		self->client->ps.stats[ STAT_MISC ] = 0;
+		self->client->ps.weaponCharge = 0;
 
 		//subtract from funds
 		G_AddCreditToClient( self->client, -( short )BG_Weapon( weapon )->price, false );
@@ -1856,93 +2058,72 @@ void BotBuyWeapon( gentity_t *self, weapon_t weapon )
 }
 void BotBuyUpgrade( gentity_t *self, upgrade_t upgrade )
 {
-	vec3_t    newOrigin;
-
-	if ( upgrade != UP_NONE )
-	{
-		//already got this?
-		if ( BG_InventoryContainsUpgrade( upgrade, self->client->ps.stats ) )
-		{
-			return;
-		}
-
-		//can afford this?
-		if ( BG_Upgrade( upgrade )->price > ( short )self->client->pers.credit )
-		{
-			return;
-		}
-
-		//have space to carry this?
-		if ( BG_Upgrade( upgrade )->slots & BG_SlotsForInventory( self->client->ps.stats ) )
-		{
-			return;
-		}
-
-		// Only humans can buy stuff
-		if ( BG_Upgrade( upgrade )->team != TEAM_HUMANS )
-		{
-			return;
-		}
-
-		//are we /allowed/ to buy this?
-		if ( !BG_Upgrade( upgrade )->purchasable )
-		{
-			return;
-		}
-
-		//are we /allowed/ to buy this?
-		if ( !BG_UpgradeUnlocked( upgrade ) || BG_UpgradeDisabled( upgrade ) )
-		{
-			return;
-		}
-
-		if ( upgrade == UP_LIGHTARMOUR )
-		{
-			if ( !G_RoomForClassChange( self, PCL_HUMAN_LIGHT, newOrigin ) )
-			{
-				return;
-			}
-			VectorCopy( newOrigin, self->client->ps.origin );
-			self->client->ps.stats[ STAT_CLASS ] = PCL_HUMAN_LIGHT;
-			self->client->pers.classSelection = PCL_HUMAN_LIGHT;
-			BotSetNavmesh( self, PCL_HUMAN_LIGHT );
-			self->client->ps.eFlags ^= EF_TELEPORT_BIT;
-		}
-		else if ( upgrade == UP_MEDIUMARMOUR )
-		{
-			if ( !G_RoomForClassChange( self, PCL_HUMAN_MEDIUM, newOrigin ) )
-			{
-				return;
-			}
-			VectorCopy( newOrigin, self->client->ps.origin );
-			self->client->ps.stats[ STAT_CLASS ] = PCL_HUMAN_MEDIUM;
-			self->client->pers.classSelection = PCL_HUMAN_MEDIUM;
-			BotSetNavmesh( self, PCL_HUMAN_MEDIUM );
-			self->client->ps.eFlags ^= EF_TELEPORT_BIT;
-		}
-		else if ( upgrade == UP_BATTLESUIT )
-		{
-			if ( !G_RoomForClassChange( self, PCL_HUMAN_BSUIT, newOrigin ) )
-			{
-				return;
-			}
-			VectorCopy( newOrigin, self->client->ps.origin );
-			self->client->ps.stats[ STAT_CLASS ] = PCL_HUMAN_BSUIT;
-			self->client->pers.classSelection = PCL_HUMAN_BSUIT;
-			BotSetNavmesh( self, PCL_HUMAN_BSUIT );
-			self->client->ps.eFlags ^= EF_TELEPORT_BIT;
-		}
-
-		//add to inventory
-		BG_AddUpgradeToInventory( upgrade, self->client->ps.stats );
-
-		//subtract from funds
-		G_AddCreditToClient( self->client, -( short )BG_Upgrade( upgrade )->price, false );
-	}
-	else
+	if ( upgrade == UP_NONE )
 	{
 		return;
 	}
+
+	//already got this?
+	if ( BG_InventoryContainsUpgrade( upgrade, self->client->ps.stats ) )
+	{
+		return;
+	}
+
+	//can afford this?
+	if ( BG_Upgrade( upgrade )->price > ( short )self->client->pers.credit )
+	{
+		return;
+	}
+
+	//have space to carry this?
+	if ( BG_Upgrade( upgrade )->slots & BG_SlotsForInventory( self->client->ps.stats ) )
+	{
+		return;
+	}
+
+	// Only humans can buy stuff
+	if ( BG_Upgrade( upgrade )->team != TEAM_HUMANS )
+	{
+		return;
+	}
+
+	//are we /allowed/ to buy this?
+	if ( !BG_Upgrade( upgrade )->purchasable )
+	{
+		return;
+	}
+
+	//are we /allowed/ to buy this?
+	if ( !BG_UpgradeUnlocked( upgrade ) || BG_UpgradeDisabled( upgrade ) )
+	{
+		return;
+	}
+
+	vec3_t newOrigin;
+	struct
+	{
+		upgrade_t upg;
+		class_t cls;
+	} armorToClass[] =
+	{
+		{ UP_LIGHTARMOUR, PCL_HUMAN_LIGHT },
+		{ UP_MEDIUMARMOUR, PCL_HUMAN_MEDIUM },
+		{ UP_BATTLESUIT, PCL_HUMAN_BSUIT },
+	};
+
+	for ( auto const& armor : armorToClass )
+	{
+		if ( upgrade == armor.upg && !BotChangeClass( self, armor.cls, newOrigin ) )
+		{
+			return;
+		}
+	}
+
+	//add to inventory
+	BG_AddUpgradeToInventory( upgrade, self->client->ps.stats );
+
+	//subtract from funds
+	G_AddCreditToClient( self->client, -( short )BG_Upgrade( upgrade )->price, false );
 
 	//update ClientInfo
 	ClientUserinfoChanged( self->client->ps.clientNum, false );
@@ -1988,7 +2169,7 @@ void BotSellWeapons( gentity_t *self )
 		}
 	}
 }
-void BotSellAll( gentity_t *self )
+void BotSellUpgrades( gentity_t *self )
 {
 	int i;
 
@@ -1997,7 +2178,6 @@ void BotSellAll( gentity_t *self )
 	{
 		return;
 	}
-	BotSellWeapons( self );
 
 	//sell upgrades
 	for ( i = UP_NONE + 1; i < UP_NUM_UPGRADES; i++ )
@@ -2070,7 +2250,7 @@ gentity_t *BotPopEnemy( enemyQueue_t *queue )
 		return nullptr;
 	}
 
-	if ( level.time - queue->enemys[ queue->front ].timeFound >= g_bot_reactiontime.integer )
+	if ( level.time - queue->enemys[ queue->front ].timeFound >= g_bot_reactiontime.Get() )
 	{
 		gentity_t *ret = queue->enemys[ queue->front ].ent;
 		queue->front = ( queue->front + 1 ) % MAX_ENEMY_QUEUE;
@@ -2080,47 +2260,9 @@ gentity_t *BotPopEnemy( enemyQueue_t *queue )
 	return nullptr;
 }
 
-bool BotEnemyIsValid( gentity_t *self, gentity_t *enemy )
-{
-	if ( !enemy->inuse )
-	{
-		return false;
-	}
-
-	// Only living targets are valid.
-	if ( !Entities::IsAlive( enemy ) )
-	{
-		return false;
-	}
-
-	//ignore buildings if we cant attack them
-	if ( enemy->s.eType == entityType_t::ET_BUILDABLE && ( !g_bot_attackStruct.integer ||
-	                                         self->client->ps.stats[STAT_CLASS] == PCL_ALIEN_LEVEL0 ) )
-	{
-		return false;
-	}
-
-	if ( BotGetEntityTeam( enemy ) == self->client->pers.team )
-	{
-		return false;
-	}
-
-	if ( BotGetEntityTeam( enemy ) == TEAM_NONE )
-	{
-		return false;
-	}
-
-	if ( enemy->client && enemy->client->sess.spectatorState != SPECTATOR_NOT )
-	{
-		return false;
-	}
-
-	return true;
-}
-
 void BotPain( gentity_t *self, gentity_t *attacker, int )
 {
-	if ( BotGetEntityTeam( attacker ) != TEAM_NONE && BotGetEntityTeam( attacker ) != self->client->pers.team )
+	if ( G_Team( attacker ) != TEAM_NONE && G_Team( attacker ) != self->client->pers.team )
 	{
 		if ( attacker->s.eType == entityType_t::ET_PLAYER )
 		{
@@ -2138,17 +2280,17 @@ void BotSearchForEnemy( gentity_t *self )
 	do
 	{
 		enemy = BotPopEnemy( queue );
-	} while ( enemy && !BotEnemyIsValid( self, enemy ) );
+	} while ( enemy && !BotEntityIsValidEnemyTarget( self, enemy ) );
 
 	self->botMind->bestEnemy.ent = enemy;
 
-	if ( self->botMind->bestEnemy.ent ) 
+	if ( self->botMind->bestEnemy.ent )
 	{
 		self->botMind->bestEnemy.distance = Distance( self->s.origin, self->botMind->bestEnemy.ent->s.origin );
 	}
 	else
 	{
-		self->botMind->bestEnemy.distance = INT_MAX;
+		self->botMind->bestEnemy.distance = std::numeric_limits<float>::max();
 	}
 }
 
@@ -2168,4 +2310,97 @@ void BotCalculateStuckTime( gentity_t *self )
 		BotResetStuckTime( self );
 	}
 	self->botMind->lastThink = level.time;
+}
+
+/*
+========================
+botTarget_t methods implementations
+========================
+ */
+
+botTarget_t& botTarget_t::operator=(const gentity_t *newTarget) {
+	if (newTarget == nullptr) {
+		this->clear();
+		return *this;
+	}
+
+	ent = newTarget;
+	VectorClear( coord );
+	type = targetType::ENTITY;
+
+	if (!targetsValidEntity())
+	{
+		Log::Warn("bot: selecting invalid entity as target");
+	}
+
+	return *this;
+}
+
+botTarget_t& botTarget_t::operator=(const vec3_t newTarget) {
+	VectorCopy(newTarget, coord);
+	ent = nullptr;
+	type = targetType::COORDS;
+	return *this;
+}
+
+void botTarget_t::clear() {
+	ent = nullptr;
+	VectorClear(coord);
+	type = targetType::EMPTY;
+}
+
+entityType_t botTarget_t::getTargetType() const
+{
+	if ( targetsValidEntity() )
+	{
+		return ent->s.eType;
+	}
+	else
+	{
+		return Util::enum_cast<entityType_t>(-1);
+	}
+}
+
+
+bool botTarget_t::isValid() const
+{
+	if (targetsCoordinates())
+		return true;
+	if (targetsValidEntity())
+		return true;
+	return false;
+}
+
+bool botTarget_t::targetsCoordinates() const
+{
+	return type == targetType::COORDS;
+}
+
+bool botTarget_t::targetsValidEntity() const
+{
+	if (ent) {
+		return BotEntityIsValidTarget(ent.get());
+	}
+	return false;
+}
+
+const gentity_t *botTarget_t::getTargetedEntity() const
+{
+	return ent.get();
+}
+
+void botTarget_t::getPos(vec3_t pos) const
+{
+	if ( type == targetType::ENTITY && ent )
+	{
+		VectorCopy( ent->s.origin, pos );
+	}
+	else if ( type == targetType::COORDS )
+	{
+		VectorCopy( coord, pos );
+	}
+	else
+	{
+		Log::Warn("Bot: couldn't get position of target");
+	}
 }

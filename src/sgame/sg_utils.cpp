@@ -276,8 +276,7 @@ Kill box
 =================
 G_KillBox
 
-Kills all entities that would touch the proposed new positioning
-of ent.  Ent should be unlinked before calling this!
+Kills all entities overlapping with `ent`.
 =================
 */
 void G_KillBox( gentity_t *ent )
@@ -294,11 +293,6 @@ void G_KillBox( gentity_t *ent )
 	for ( i = 0; i < num; i++ )
 	{
 		hit = &g_entities[ touch[ i ] ];
-
-		if ( !hit->client )
-		{
-			continue;
-		}
 
 		// impossible to telefrag self
 		if ( ent == hit )
@@ -889,4 +883,21 @@ team_t G_IterateTeams( team_t team )
 // TODO: Add LocationComponent
 float G_Distance( gentity_t *ent1, gentity_t *ent2 ) {
 	return Distance(ent1->s.origin, ent2->s.origin);
+}
+
+float G_DistanceToBBox( const vec3_t origin, gentity_t* ent )
+{
+	float distanceSquared = 0.0f;
+	for ( int i = 0; i < 3; i++ )
+	{
+		if ( origin[ i ] < ent->r.absmin [i ] )
+		{
+			distanceSquared += Square( ent->r.absmin[ i ] - origin[ i ] );
+		}
+		else if ( origin[ i ] > ent->r.absmax[ i ] )
+		{
+			distanceSquared += Square( origin[ i ] - ent->r.absmax[ i ] );
+		}
+	}
+	return sqrtf( distanceSquared );
 }

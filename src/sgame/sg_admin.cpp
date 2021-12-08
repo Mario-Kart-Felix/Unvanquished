@@ -36,6 +36,79 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "sg_local.h"
 #include "engine/qcommon/q_unicode.h"
 
+struct g_admin_cmd_t
+{
+	const char *keyword;
+	bool  ( *handler )( gentity_t *ent );
+	bool   silent;
+	const char *flag;
+	const char *function; // used for /help
+	const char *syntax; // used for /help
+};
+
+struct g_admin_level_t
+{
+	g_admin_level_t      *next;
+
+	int                  level;
+	char                 name[ MAX_NAME_LENGTH ];
+	char                 flags[ MAX_ADMIN_FLAGS ];
+};
+
+struct g_admin_ban_t
+{
+	g_admin_ban_t      *next;
+	int                id;
+
+	char               name[ MAX_NAME_LENGTH ];
+	char               guid[ 33 ];
+	addr_t             ip;
+	char               reason[ MAX_ADMIN_BAN_REASON ];
+	char               made[ 20 ]; // "YYYY-MM-DD hh:mm:ss"
+	int                expires;
+	char               banner[ MAX_NAME_LENGTH ];
+	int                warnCount;
+};
+
+struct g_admin_command_t
+{
+	g_admin_command_t      *next;
+
+	char                   command[ MAX_ADMIN_CMD_LEN ];
+	char                   exec[ MAX_QPATH ];
+	char                   desc[ 50 ];
+	char                   flag[ MAX_ADMIN_FLAG_LEN ];
+};
+
+struct g_admin_spec_t
+{
+	g_admin_spec_t     *next;
+	char               guid[ 33 ];
+	// -1: can not join until next game
+	// otherwise: expires - t : can not join until delta
+	int                expires;
+};
+
+struct g_admin_admin_t
+{
+	g_admin_admin_t      *next;
+
+	int                  level;
+	char                 guid[ 33 ];
+	char                 name[ MAX_NAME_LENGTH ];
+	char                 flags[ MAX_ADMIN_FLAGS ];
+	char                 pubkey[ RSA_STRING_LENGTH ];
+	char                 msg[ RSA_STRING_LENGTH ];
+	char                 msg2[ RSA_STRING_LENGTH ];
+	qtime_t              lastSeen;
+	int                  counter;
+};
+
+int G_admin_joindelay( g_admin_spec_t const* ptr )
+{
+	return ptr->expires;
+}
+
 static void G_admin_notIntermission( gentity_t *ent )
 {
 	char command[ MAX_ADMIN_CMD_LEN ];
@@ -58,6 +131,8 @@ static std::string       g_bfb;
 #define MAX_MESSAGE_SIZE static_cast<size_t>(1022)
 
 static bool G_admin_maprestarted( gentity_t * );
+
+static Cvar::Cvar<std::string> g_mapRestarted("g_mapRestarted", "informs whether the map was restarted (y), whether teams are kept together (k) and whether sides are swapped (s)", Cvar::NONE, "0");
 
 // note: list ordered alphabetically
 static const g_admin_cmd_t     g_admin_cmds[] =
@@ -790,7 +865,7 @@ void G_admin_writeconfig()
 	g_admin_ban_t     *b;
 	g_admin_command_t *c;
 
-	if ( !g_admin.string[ 0 ] )
+	if ( g_admin.Get().empty() )
 	{
 		Log::Warn("g_admin is not set. "
 		          " configuration will not be saved to a file." );
@@ -799,10 +874,10 @@ void G_admin_writeconfig()
 
 	t = Com_GMTime( nullptr );
 
-	if ( trap_FS_FOpenFile( g_admin.string, &f, fsMode_t::FS_WRITE_VIA_TEMPORARY ) < 0 )
+	if ( trap_FS_FOpenFile( g_admin.Get().c_str(), &f, fsMode_t::FS_WRITE_VIA_TEMPORARY ) < 0 )
 	{
 		Log::Warn( "admin_writeconfig: could not open g_admin file \"%s\"",
-		          g_admin.string );
+		          g_admin.Get() );
 		return;
 	}
 
@@ -1583,17 +1658,13 @@ bool G_admin_cmd_check( gentity_t *ent )
 	if ( ( c = G_admin_command( command ) ) )
 	{
 		int j;
-		trap_Cvar_Register( nullptr, "arg_all", "", CVAR_TEMP | CVAR_ROM | CVAR_USER_CREATED );
 		trap_Cvar_Set( "arg_all", ConcatArgs( 1 ) );
-		trap_Cvar_Register( nullptr, "arg_count", "", CVAR_TEMP | CVAR_ROM | CVAR_USER_CREATED );
 		trap_Cvar_Set( "arg_count", va( "%i", trap_Argc() - ( 1 ) ) );
-		trap_Cvar_Register( nullptr, "arg_client", "", CVAR_TEMP | CVAR_ROM | CVAR_USER_CREATED );
 		trap_Cvar_Set( "arg_client", G_admin_name( ent ) );
 
 		for ( j = trap_Argc() - ( 1 ); j; j-- )
 		{
 			char this_arg[ MAX_CVAR_VALUE_STRING ];
-			trap_Cvar_Register( nullptr, va( "arg_%i", j ), "", CVAR_TEMP | CVAR_ROM | CVAR_USER_CREATED );
 			trap_Argv( j, this_arg, sizeof( this_arg ) );
 			trap_Cvar_Set( va( "arg_%i", j ), this_arg );
 		}
@@ -1806,19 +1877,19 @@ bool G_admin_readconfig( gentity_t *ent )
 
 	G_admin_cleanup();
 
-	if ( !g_admin.string[ 0 ] )
+	if ( g_admin.Get().empty() )
 	{
 		ADMP( QQ( N_("^3readconfig: g_admin is not set, not loading configuration "
 		      "from a file" ) ) );
 		return false;
 	}
 
-	len = trap_FS_FOpenFile( g_admin.string, &f, fsMode_t::FS_READ );
+	len = trap_FS_FOpenFile( g_admin.Get().c_str(), &f, fsMode_t::FS_READ );
 
 	if ( len < 0 )
 	{
 		Log::Warn( "^3readconfig:^* could not open admin config file %s",
-		          g_admin.string );
+		          g_admin.Get() );
 		admin_default_levels();
 		return false;
 	}
@@ -1833,7 +1904,7 @@ bool G_admin_readconfig( gentity_t *ent )
 	admin_level_maxname = 0;
 
 	level_open = admin_open = ban_open = command_open = false;
-	COM_BeginParseSession( g_admin.string );
+	COM_BeginParseSession( g_admin.Get().c_str() );
 
 	while ( 1 )
 	{
@@ -2545,7 +2616,7 @@ bool G_admin_kick( gentity_t *ent )
 	               vic->client->pers.guid,
 	               vic->client->pers.netname,
 	               reason ) );
-	time = G_admin_parse_time( g_adminTempBan.string );
+	time = G_admin_parse_time( g_adminTempBan.Get().c_str() );
 	admin_create_ban( ent,
 	                  vic->client->pers.netname,
 	                  vic->client->pers.guid,
@@ -2599,7 +2670,7 @@ bool G_admin_ban( gentity_t *ent )
 
 	if ( !G_admin_permission( ent, ADMF_CAN_PERM_BAN ) )
 	{
-		int maximum = G_admin_parse_time( g_adminMaxBan.string );
+		int maximum = G_admin_parse_time( g_adminMaxBan.Get().c_str() );
 
 		if ( seconds == 0 || seconds > std::max( 1, maximum ) )
 		{
@@ -2711,7 +2782,7 @@ bool G_admin_ban( gentity_t *ent )
 
 	match->banned = true;
 
-	if ( !g_admin.string[ 0 ] )
+	if ( g_admin.Get().empty() )
 	{
 		ADMP( QQ( N_("^3ban:^* WARNING g_admin not set, not saving ban to a file" ) ) );
 	}
@@ -2741,7 +2812,7 @@ bool G_admin_unban( gentity_t *ent )
 	trap_Argv( 1, bs, sizeof( bs ) );
 	bnum = atoi( bs );
 
-	expireOnly = ( bnum > 0 ) && g_adminRetainExpiredBans.integer;
+	expireOnly = ( bnum > 0 ) && g_adminRetainExpiredBans.Get();
 	bnum = abs( bnum );
 
 	for ( ban = p = g_admin_bans; ban && ban->id != bnum; p = ban, ban = ban->next ) {}
@@ -2756,7 +2827,7 @@ bool G_admin_unban( gentity_t *ent )
 	{
 		int maximum;
 		if ( ban->expires == 0 ||
-		     ( maximum = G_admin_parse_time( g_adminMaxBan.string ), ban->expires - time > std::max( 1, maximum ) ) )
+		     ( maximum = G_admin_parse_time( g_adminMaxBan.Get().c_str() ), ban->expires - time > std::max( 1, maximum ) ) )
 		{
 			ADMP( QQ( N_("^3unban:^* you cannot remove permanent bans") ) );
 			return false;
@@ -2842,7 +2913,7 @@ bool G_admin_adjustban( gentity_t *ent )
 		return false;
 	}
 
-	maximum = G_admin_parse_time( g_adminMaxBan.string );
+	maximum = G_admin_parse_time( g_adminMaxBan.Get().c_str() );
 	maximum = std::max( 1, maximum );
 
 	if ( !G_admin_permission( ent, ADMF_CAN_PERM_BAN ) &&
@@ -2959,15 +3030,15 @@ bool G_admin_adjustban( gentity_t *ent )
 	               ban->expires ? ban->expires - time : 0, ban->guid, ban->name, ban->reason,
 	               ban->ip.str ) );
 	AP( va( "print_tr %s %d %s %s %s %s %s %s %s %s %s", QQ( N_("^3adjustban:^* ban #$1$ for $2$^* has been updated by $3$^* "
-	        "$4t$$5$$6$$7t$$8$$9t$$10$") ),
+	        "$4$$5t$$6$$7t$$8$$9t$$10$") ),
 	        bnum,
 	        Quote( ban->name ),
 	        G_quoted_admin_name( ent ),
 	        ( mask ) ? Quote( va( "netmask: /%d%s", mask, ( length >= 0 || *reason ) ? ", " : "" ) ) : "",
-		( length >= 0 ) ? QQ( "duration: " ) : "",
+		( length >= 0 ) ? QQ( N_( "duration: " ) ) : "",
 		Quote( seconds ), duration,
 		( length >= 0 && *reason ) ? ", " : "",
-		( *reason ) ? QQ("reason: ") : "",
+		( *reason ) ? QQ( N_( "reason: ") ) : "",
 		Quote( reason ) ) );
 
 	if ( ent )
@@ -3082,7 +3153,7 @@ bool G_admin_speclock( gentity_t *ent )
 
 	if ( lockTime == -1 )
 	{
-		lockTime = G_admin_parse_time( g_adminTempBan.string );
+		lockTime = G_admin_parse_time( g_adminTempBan.Get().c_str() );
 
 		if ( lockTime == -1 )
 		{
@@ -3224,7 +3295,7 @@ bool G_admin_changemap( gentity_t *ent )
 	AP( va( "print_tr %s %s %s %s %s %s", QQ( N_("^3changemap:^* map '$1$' started by $2$^* $3t$$4$$5$") ),
 		Quote( map ),
 	        G_quoted_admin_name( ent ),
-	        ( layout[ 0 ] ) ? QQ( "(forcing layout '") : "" ,
+	        ( layout[ 0 ] ) ? QQ( N_( "(forcing layout '") ) : "" ,
 			( layout[ 0 ] ) ? Quote( layout ) : "",
 			( layout[ 0 ] ) ? QQ( "')" ) : "" ) );
 	return true;
@@ -3269,7 +3340,7 @@ bool G_admin_warn( gentity_t *ent )
 	// create a ban list entry, set warnCount to -1 to indicate that this should NOT result in denying connection
 	if ( ent && !ent->client->pers.localClient )
 	{
-		int time = G_admin_parse_time( g_adminWarn.string );
+		int time = G_admin_parse_time( g_adminWarn.Get().c_str() );
 		admin_create_ban_entry( ent, vic->client->pers.netname, vic->client->pers.guid, &vic->client->pers.ip, std::max(1, time), ( *reason ) ? reason : "warned by admin" )->warnCount = -1;
 		vic->client->pers.hasWarnings = true;
 	}
@@ -4268,8 +4339,8 @@ bool G_admin_restart( gentity_t *ent )
 	admin_log( teampref );
 
 	// cvars
-	trap_Cvar_Set( "g_layouts", layout );
-	trap_Cvar_Set( "g_mapRestarted", "y" );
+	g_layouts.Set(layout);
+	g_mapRestarted.Set("y");
 
 	// handle the flag
 	if ( !Q_stricmp( teampref, "keepteams" ) || !Q_stricmp( teampref, "keepteamslock" ) || !Q_stricmp( teampref,"kt" ) || !Q_stricmp( teampref,"ktl" ) )
@@ -4291,7 +4362,7 @@ bool G_admin_restart( gentity_t *ent )
 			cl->sess.restartTeam = (team_t) cl->pers.team;
 		}
 
-		trap_Cvar_Set( "g_mapRestarted", "yk" );
+		g_mapRestarted.Set("yk");
 	}
 	else if ( !Q_stricmp( teampref, "switchteams" ) || !Q_stricmp( teampref, "switchteamslock" ) || !Q_stricmp( teampref,"st" ) || !Q_stricmp( teampref,"stl" ))
 	{
@@ -4314,7 +4385,7 @@ bool G_admin_restart( gentity_t *ent )
 			}
 		}
 
-		trap_Cvar_Set( "g_mapRestarted", "yks" );
+		g_mapRestarted.Set("yks");
 	}
 	else if ( *teampref )
 	{
@@ -4326,13 +4397,13 @@ bool G_admin_restart( gentity_t *ent )
 	     !Q_stricmp( teampref, "keepteamslock" ) ||
 		 !Q_stricmp( teampref,"ktl" ) || !Q_stricmp( teampref,"stl" ) )
 	{
-		trap_Cvar_Set( "g_lockTeamsAtStart", "1" );
+		g_lockTeamsAtStart.Set(true);
 	}
 
 	trap_SendConsoleCommand( "map_restart" );
 	G_MapLog_Result( 'R' );
 
-	AP( va( "print_tr %s %s %s %s %s %s %s %s", QQ( N_("^3restart:^* map restarted by $1$ $2$$3t$$4$$5$$6t$$7$") ),
+	AP( va( "print_tr %s %s %s %s %s %s %s %s", QQ( N_("^3restart:^* map restarted by $1$ $2t$$3$$4$$5t$$6$$7$") ),
 	        G_quoted_admin_name( ent ),
 	        ( layout[ 0 ] ) ? QQ( N_( "^7(forcing layout '" ) ) : "",
 			( layout[ 0 ] ) ? Quote( layout ) : "",
@@ -4595,7 +4666,7 @@ bool G_admin_lock( gentity_t *ent )
 	trap_Argv( 1, teamName, sizeof( teamName ) );
 	team = G_TeamFromString( teamName );
 
-	if ( team == TEAM_ALIENS || team== TEAM_HUMANS )
+	if ( G_IsPlayableTeam( team ) )
 	{
 		if ( level.team[ team ].locked == lock )
 		{
@@ -5123,12 +5194,10 @@ bool G_admin_buildlog( gentity_t *ent )
 	int        time;
 	int        start = MAX_CLIENTS + level.buildId - level.numBuildLogs;
 	int        i = 0, j;
-	int        team;
-	bool   admin;
+	bool       admin = !ent || G_admin_permission( ent, "buildlog_admin" );
+	int        team = admin ? TEAM_NONE : G_Team( ent );
 	buildLog_t *log;
 
-	admin = !ent || G_admin_permission( ent, "buildlog_admin" );
-	team = admin ? TEAM_NONE : ent->client->pers.team;
 
 	if ( !admin && team == TEAM_NONE )
 	{
@@ -5501,6 +5570,7 @@ void G_admin_print_plural( gentity_t *ent, Str::StringRef m, int number )
  These function facilitates the ADMBP* defines, and output is as for ADMP().
 
  The supplied text is raw; it will be quoted but not marked translatable.
+ FIXME: it actually is marked translatable (print_tr is used) but shouldn't be
 ================
 */
 void G_admin_buffer_begin()
@@ -5598,6 +5668,7 @@ static void BotUsage( gentity_t *ent )
 	                                        "            bot del (<name> | all)\n"
 	                                        "            bot names (aliens | humans) <names>…\n"
 	                                        "            bot names (clear | list)\n"
+	                                        "            bot behavior (<name> | <slot#>) <behavior>\n"
 	                                        "            bot debug_reload" ) );
 	ADMP( bot_usage );
 }
@@ -5606,9 +5677,9 @@ static void BotUsage( gentity_t *ent )
 static int BotSkillFromString( gentity_t* ent, const char* s )
 {
 	int skill0 = atoi( s );
-	int skill = Math::Clamp( atoi( s ), 1, 10 );
+	int skill = Math::Clamp( skill0, 1, 9 );
 	if (skill0 != skill) {
-		ADMP( QQ( N_( "Bot skill level should be from 1 to 10" ) ) );
+		ADMP( QQ( N_( "Bot skill level should be from 1 to 9" ) ) );
 	}
 	return skill;
 }
@@ -5733,6 +5804,22 @@ bool G_admin_bot( gentity_t *ent )
 			G_BotDel( clientNum ); //delete the bot
 		}
 	}
+	else if ( !Q_stricmp( arg1, "behavior" ) && args.Argc() == 4 )
+	{
+		RETURN_IF_INTERMISSION;
+
+		char err[MAX_STRING_CHARS];
+		const char *name = args[2].data();
+		int clientNum = G_ClientNumberFromString( name, err, sizeof( err ) );
+		if ( clientNum == -1 ) //something went wrong when finding the client Number
+		{
+			ADMP( va( "%s %s %s", QQ( "^3$1$:^* $2t$" ), "bot", Quote( err ) ) );
+			return false;
+		}
+		const char *behavior = args[3].data();
+		G_BotChangeBehavior( clientNum, behavior );
+
+	}
 	else if ( !Q_stricmp( arg1, "names" ) && args.Argc() >= 3 )
 	{
 		const char *name = args[2].data();
@@ -5795,8 +5882,60 @@ static bool G_admin_maprestarted( gentity_t *ent )
 {
 	if ( !ent )
 	{
-		trap_Cvar_Set( "g_mapRestarted", "" );
+		g_mapRestarted.Set("");
 	}
 
 	return true;
+}
+
+/*
+============
+ClientAdminChallenge
+============
+*/
+void ClientAdminChallenge( int clientNum )
+{
+	gclient_t       *client = level.clients + clientNum;
+	g_admin_admin_t *admin = client->pers.admin;
+
+	if ( !client->pers.pubkey_authenticated && admin && admin->pubkey[ 0 ] && ( level.time - client->pers.pubkey_challengedAt ) >= 6000 )
+	{
+		trap_SendServerCommand( clientNum, va( "pubkey_decrypt %s", admin->msg2 ) );
+		client->pers.pubkey_challengedAt = level.time ^ ( 5 * clientNum ); // a small amount of jitter
+
+		// copy the decrypted message because generating a new message will overwrite it
+		G_admin_writeconfig();
+	}
+}
+
+void Cmd_Pubkey_Identify_f( gentity_t *ent )
+{
+	char            buffer[ MAX_STRING_CHARS ];
+	g_admin_admin_t *admin = ent->client->pers.admin;
+
+	if ( trap_Argc() != 2 )
+	{
+		return;
+	}
+
+	if ( ent->client->pers.pubkey_authenticated != 0 || !admin->pubkey[ 0 ] || admin->counter == -1 )
+	{
+		return;
+	}
+
+	trap_Argv( 1, buffer, sizeof( buffer ) );
+	if ( Q_strncmp( buffer, admin->msg, MAX_STRING_CHARS ) )
+	{
+		return;
+	}
+
+	ent->client->pers.pubkey_authenticated = 1;
+	G_admin_authlog( ent );
+	G_admin_cmdlist( ent );
+	CP( "cp_tr " QQ(N_("^2Pubkey authenticated")) "" );
+}
+
+qtime_t* G_admin_lastSeen( g_admin_admin_t* admin )
+{
+	return &admin->lastSeen;
 }

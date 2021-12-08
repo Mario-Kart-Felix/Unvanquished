@@ -204,6 +204,12 @@ static particle_t *CG_SpawnNewParticle( baseParticle_t *bp, particleEjector_t *p
 					bp->modelAnimation.frameLerp = p->lifeTime / bp->modelAnimation.numFrames;
 					bp->modelAnimation.initialLerp = p->lifeTime / bp->modelAnimation.numFrames;
 				}
+				else if ( bp->modelAnimation.frameLerp == 0 )
+				{
+					// Bypass calculations in CG_RunLerpFrame if there is no modelAnimation
+					// since it will try to divide by frameLerp
+					p->lf.animationTime = std::numeric_limits<int>::max();
+				}
 			}
 
 			if ( !CG_AttachmentPoint( &ps->attachment, attachmentPoint ) )
@@ -351,7 +357,7 @@ static particle_t *CG_SpawnNewParticle( baseParticle_t *bp, particleEjector_t *p
 			{
 				trailSystem_t *ts = CG_SpawnNewTrailSystem( bp->childTrailSystemHandle );
 
-				if ( CG_IsTrailSystemValid( &ts ) )
+				if ( ts != nullptr )
 				{
 					CG_SetAttachmentParticle( &ts->frontAttachment, p );
 					CG_AttachToParticle( &ts->frontAttachment );
@@ -456,7 +462,7 @@ Allocate a new particle ejector
 ===============
 */
 static particleEjector_t *CG_SpawnNewParticleEjector( baseParticleEjector_t *bpe,
-    particleSystem_t *parent )
+		particleSystem_t *parent )
 {
 	int               i;
 	particleEjector_t *pe = nullptr;
@@ -485,7 +491,7 @@ static particleEjector_t *CG_SpawnNewParticleEjector( baseParticleEjector_t *bpe
 
 			pe->valid = true;
 
-			if ( cg_debugParticles.integer >= 1 )
+			if ( cg_debugParticles.Get() >= 1 )
 			{
 				Log::Debug( "PE %s created", ps->class_->name );
 			}
@@ -522,7 +528,8 @@ particleSystem_t *CG_SpawnNewParticleSystem( qhandle_t psHandle )
 
 		if ( !ps->valid )
 		{
-			memset( ps, 0, sizeof( particleSystem_t ) );
+			ps->~particleSystem_t();
+			new(ps) particleSystem_t{};
 
 			//found a free slot
 			ps->class_ = bps;
@@ -538,7 +545,7 @@ particleSystem_t *CG_SpawnNewParticleSystem( qhandle_t psHandle )
 				CG_SpawnNewParticleEjector( bps->ejectors[ j ], ps );
 			}
 
-			if ( cg_debugParticles.integer >= 1 )
+			if ( cg_debugParticles.Get() >= 1 )
 			{
 				Log::Debug( "PS %s created", bps->name );
 			}
@@ -628,7 +635,7 @@ qhandle_t CG_RegisterParticleSystem( const char *name )
 				}
 			}
 
-			if ( cg_debugParticles.integer >= 1 )
+			if ( cg_debugParticles.Get() >= 1 )
 			{
 				Log::Debug( "Registered particle system %s", name );
 			}
@@ -1703,7 +1710,7 @@ static bool CG_ParseParticleSystem( baseParticleSystem_t *bps, const char **text
 		}
 		else if ( !Q_stricmp( token, "}" ) )
 		{
-			if ( cg_debugParticles.integer >= 1 )
+			if ( cg_debugParticles.Get() >= 1 )
 			{
 				Log::Debug( "Parsed particle system %s", name );
 			}
@@ -1877,8 +1884,8 @@ void CG_LoadParticleSystems()
 	for ( i = 0; i < numFiles; i++, filePtr += fileLen + 1 )
 	{
 		fileLen = strlen( filePtr );
-		strcpy( fileName, "scripts/" );
-		strcat( fileName, filePtr );
+		Q_strncpyz( fileName, "scripts/", sizeof fileName );
+		Q_strcat( fileName, sizeof fileName, filePtr );
 		// Log::Notice(_( "...loading '%s'"), fileName );
 		CG_ParseParticleFile( fileName );
 	}
@@ -2007,7 +2014,7 @@ void CG_DestroyParticleSystem( particleSystem_t **ps )
 		return;
 	}
 
-	if ( cg_debugParticles.integer >= 1 )
+	if ( cg_debugParticles.Get() >= 1 )
 	{
 		Log::Debug( "PS destroyed" );
 	}
@@ -2144,7 +2151,7 @@ static void CG_GarbageCollectParticleSystems()
 			}
 		}
 
-		if ( cg_debugParticles.integer >= 1 && !ps->valid )
+		if ( cg_debugParticles.Get() >= 1 && !ps->valid )
 		{
 			Log::Debug( "PS %s garbage collected", ps->class_->name );
 		}
@@ -2164,16 +2171,7 @@ static float CG_CalculateTimeFrac( int birth, int life, int delay )
 
 	frac = ( ( float ) cg.time - ( float )( birth + delay ) ) / ( float )( life - delay );
 
-	if ( frac < 0.0f )
-	{
-		frac = 0.0f;
-	}
-	else if ( frac > 1.0f )
-	{
-		frac = 1.0f;
-	}
-
-	return frac;
+	return Math::Clamp( frac, 0.0f, 1.0f );
 }
 
 /*
@@ -2289,14 +2287,7 @@ static void CG_EvaluateParticlePhysics( particle_t *p )
 		float r2 = DotProduct( acceleration, acceleration );  // = radius^2
 		float scale = ( MAX_ACC_RADIUS - r2 ) / MAX_ACC_RADIUS;
 
-		if ( scale > 1.0f )
-		{
-			scale = 1.0f;
-		}
-		else if ( scale < 0.1f )
-		{
-			scale = 0.1f;
-		}
+		scale = Math::Clamp( scale, 0.1f, 1.0f );
 
 		scale *= CG_RandomiseValue( bp->accMoveValues.mag, bp->accMoveValues.magRandFrac );
 
@@ -2336,7 +2327,7 @@ static void CG_EvaluateParticlePhysics( particle_t *p )
 	p->lastEvalTime = cg.time;
 
 	// we're not doing particle physics, but at least cull them in solids
-	if ( !cg_bounceParticles.integer )
+	if ( !cg_bounceParticles.Get() )
 	{
 		int contents = trap_CM_PointContents( newOrigin, 0 );
 
@@ -2478,7 +2469,7 @@ static void CG_CompactAndSortParticles()
 		sortedParticles[ i ] = &particles[ i ];
 	}
 
-	if ( !cg_depthSortParticles.integer )
+	if ( !cg_depthSortParticles.Get() )
 	{
 		return;
 	}
@@ -2536,7 +2527,6 @@ Actually render a particle
 */
 static void CG_RenderParticle( particle_t *p )
 {
-	static refEntity_t   re; // static for proper alignment in QVMs
 	float                timeFrac, scale;
 	int                  index;
 	baseParticle_t       *bp = p->class_;
@@ -2545,7 +2535,7 @@ static void CG_RenderParticle( particle_t *p )
 	vec3_t               alight, dlight, lightdir;
 	vec3_t               up = { 0.0f, 0.0f, 1.0f };
 
-	memset( &re, 0, sizeof( refEntity_t ) );
+	refEntity_t re{};
 
 	timeFrac = CG_CalculateTimeFrac( p->birthTime, p->lifeTime, 0 );
 
@@ -2740,7 +2730,7 @@ void CG_AddParticles()
 		}
 	}
 
-	if ( cg_debugParticles.integer >= 2 )
+	if ( cg_debugParticles.Get() >= 2 )
 	{
 		for ( i = 0; i < MAX_PARTICLE_SYSTEMS; i++ )
 		{

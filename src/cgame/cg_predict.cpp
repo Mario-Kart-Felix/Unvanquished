@@ -119,7 +119,6 @@ static void CG_ClipMoveToEntities( const vec3_t start, const vec3_t mins,
 	vec3_t        tmins, tmaxs;
 	vec3_t        bmins, bmaxs;
 	vec3_t        origin, angles;
-	centity_t     *cent;
 
 	// calculate bounding box of the trace
 	ClearBounds( tmins, tmaxs );
@@ -132,15 +131,7 @@ static void CG_ClipMoveToEntities( const vec3_t start, const vec3_t mins,
 
 	for ( i = 0; i < cg_numSolidEntities; i++ )
 	{
-		if ( i < cg_numSolidEntities )
-		{
-			cent = cg_solidEntities[ i ];
-		}
-		else
-		{
-			cent = &cg.predictedPlayerEntity;
-		}
-
+		centity_t *cent = cg_solidEntities[ i ];
 		ent = &cent->currentState;
 
 		if ( ent->number == skipNumber )
@@ -167,19 +158,21 @@ static void CG_ClipMoveToEntities( const vec3_t start, const vec3_t mins,
 		}
 		else
 		{
-			// encoded bbox
-			x = ( ent->solid & 255 );
-			zd = ( ( ent->solid >> 8 ) & 255 );
-			zu = ( ( ent->solid >> 16 ) & 255 ) - 32;
-
-			bmins[ 0 ] = bmins[ 1 ] = -x;
-			bmaxs[ 0 ] = bmaxs[ 1 ] = x;
-			bmins[ 2 ] = -zd;
-			bmaxs[ 2 ] = zu;
-
-			if ( i == cg_numSolidEntities )
+			if ( ent->eType == entityType_t::ET_BUILDABLE )
 			{
-				BG_ClassBoundingBox( ( ent->misc >> 8 ) & 0xFF, bmins, bmaxs, nullptr, nullptr, nullptr );
+				BG_BuildableBoundingBox( ent->modelindex, bmins, bmaxs );
+			}
+			else
+			{
+				// encoded bbox
+				x = ( ent->solid & 255 );
+				zd = ( ( ent->solid >> 8 ) & 255 );
+				zu = ( ( ent->solid >> 16 ) & 255 ) - 32;
+
+				bmins[ 0 ] = bmins[ 1 ] = -x;
+				bmaxs[ 0 ] = bmaxs[ 1 ] = x;
+				bmins[ 2 ] = -zd;
+				bmaxs[ 2 ] = zu;
 			}
 
 			VectorAdd( cent->lerpOrigin, bmins, bmins );
@@ -205,7 +198,7 @@ static void CG_ClipMoveToEntities( const vec3_t start, const vec3_t mins,
 			                             origin, angles );
 			break;
 
-        case traceType_t::TT_BISPHERE:
+		case traceType_t::TT_BISPHERE:
 			ASSERT(maxs != nullptr);
 			ASSERT(mins != nullptr);
 			trap_CM_TransformedBiSphereTrace( &trace, start, end, mins[ 0 ], maxs[ 0 ], cmodel,
@@ -513,7 +506,7 @@ static int CG_IsUnacceptableError( playerState_t *ps, playerState_t *pps )
 
 	if ( VectorLengthSquared( delta ) > 0.1f * 0.1f )
 	{
-		if ( cg_showmiss.integer )
+		if ( cg_showmiss.Get() )
 		{
 			Log::Debug( "origin delta: %.2f  ", VectorLength( delta ) );
 		}
@@ -525,7 +518,7 @@ static int CG_IsUnacceptableError( playerState_t *ps, playerState_t *pps )
 
 	if ( VectorLengthSquared( delta ) > 0.1f * 0.1f )
 	{
-		if ( cg_showmiss.integer )
+		if ( cg_showmiss.Get() )
 		{
 			Log::Debug( "velocity delta: %.2f  ", VectorLength( delta ) );
 		}
@@ -629,6 +622,12 @@ static int CG_IsUnacceptableError( playerState_t *ps, playerState_t *pps )
 		}
 	}
 
+	int weaponChargeDiff = pps->weaponCharge - ps->weaponCharge;
+	if ( weaponChargeDiff <= -50 || weaponChargeDiff >= 50 )
+	{
+		return 17;
+	}
+
 	if ( pps->generic1 != ps->generic1 ||
 	     pps->loopSound != ps->loopSound )
 	{
@@ -691,7 +690,7 @@ void CG_PredictPlayerState()
 	}
 
 	// non-predicting local movement will grab the latest angles
-	if ( cg_nopredict.integer || cg.pmoveParams.synchronous )
+	if ( cg_nopredict.Get() || cg.pmoveParams.synchronous )
 	{
 		CG_InterpolatePlayerState( true );
 		return;
@@ -702,7 +701,7 @@ void CG_PredictPlayerState()
 	cg_pmove.pmext = &cg.pmext;
 	cg_pmove.trace = CG_Trace;
 	cg_pmove.pointcontents = CG_PointContents;
-	cg_pmove.debugLevel = cg_debugMove.integer;
+	cg_pmove.debugLevel = cg_debugMove.Get();
 
 	if ( cg_pmove.ps->pm_type == PM_DEAD )
 	{
@@ -735,7 +734,7 @@ void CG_PredictPlayerState()
 	     oldestCmd.serverTime < cg.time )
 	{
 		// special check for map_restart
-		if ( cg_showmiss.integer )
+		if ( cg_showmiss.Get() )
 		{
 			Log::Debug( "exceeded PACKET_BACKUP on commands" );
 		}
@@ -783,7 +782,7 @@ void CG_PredictPlayerState()
 	// except a frame following a new snapshot in which there was a prediction
 	// error.  This yields anywhere from a 15% to 40% performance increase,
 	// depending on how much of a bottleneck the CPU is.
-	if ( cg_optimizePrediction.integer )
+	if ( cg_optimizePrediction.Get() )
 	{
 		if ( cg.nextFrameTeleport || cg.thisFrameTeleport )
 		{
@@ -823,7 +822,7 @@ void CG_PredictPlayerState()
 
 				if ( errorcode )
 				{
-					if ( cg_showmiss.integer )
+					if ( cg_showmiss.Get() )
 					{
 						Log::Debug( "error code %d at %d", errorcode, cg.time );
 					}
@@ -897,7 +896,7 @@ void CG_PredictPlayerState()
 				// a teleport will not cause an error decay
 				VectorClear( cg.predictedError );
 
-				if ( cg_showmiss.integer )
+				if ( cg_showmiss.Get() )
 				{
 					Log::Debug( "PredictionTeleport" );
 				}
@@ -910,7 +909,7 @@ void CG_PredictPlayerState()
 				CG_AdjustPositionForMover( cg.predictedPlayerState.origin,
 				                           cg.predictedPlayerState.groundEntityNum, cg.physicsTime, cg.oldTime, adjusted, cg.predictedPlayerState.viewangles, new_angles );
 
-				if ( cg_showmiss.integer )
+				if ( cg_showmiss.Get() )
 				{
 					if ( !VectorCompare( oldPlayerState.origin, adjusted ) )
 					{
@@ -923,25 +922,25 @@ void CG_PredictPlayerState()
 
 				if ( len > 0.1 )
 				{
-					if ( cg_showmiss.integer )
+					if ( cg_showmiss.Get() )
 					{
 						Log::Debug( "Prediction miss: %f", len );
 					}
 
-					if ( cg_errorDecay.integer )
+					if ( cg_errorDecay.Get() > 0 )
 					{
 						int   t;
 						float f;
 
 						t = cg.time - cg.predictedErrorTime;
-						f = ( cg_errorDecay.value - t ) / cg_errorDecay.value;
+						f = ( cg_errorDecay.Get() - t ) / cg_errorDecay.Get();
 
 						if ( f < 0 )
 						{
 							f = 0;
 						}
 
-						if ( f > 0 && cg_showmiss.integer )
+						if ( f > 0 && cg_showmiss.Get() )
 						{
 							Log::Debug( "Double prediction decay: %f", f );
 						}
@@ -972,11 +971,11 @@ void CG_PredictPlayerState()
 			                            cg.pmoveParams.msec ) * cg.pmoveParams.msec;
 		}
 
-		if ( !cg_optimizePrediction.integer )
+		if ( !cg_optimizePrediction.Get() )
 		{
 			Pmove( &cg_pmove );
 		}
-		else if ( cg_optimizePrediction.integer && ( cmdNum >= predictCmd ||
+		else if ( cg_optimizePrediction.Get() && ( cmdNum >= predictCmd ||
 		          ( stateIndex + 1 ) % NUM_SAVED_STATES == cg.stateHead ) )
 		{
 			Pmove( &cg_pmove );

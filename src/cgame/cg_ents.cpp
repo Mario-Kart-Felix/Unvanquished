@@ -299,12 +299,10 @@ static void CG_EntityEffects( centity_t *cent )
 		trap_R_AddAdditiveLightToScene( cent->lerpOrigin, i, r, g, b );
 	}
 
-	if ( CG_IsTrailSystemValid( &cent->muzzleTS ) )
+	if ( cg.time > cent->muzzleTSDeathTime && CG_IsTrailSystemValid( &cent->muzzleTS ) )
 	{
-		if ( cg.time > cent->muzzleTSDeathTime && CG_IsTrailSystemValid( &cent->muzzleTS ) )
-		{
-			CG_DestroyTrailSystem( &cent->muzzleTS );
-		}
+		CG_DestroyTrailSystem( cent->muzzleTS );
+		cent->muzzleTS = nullptr;
 	}
 }
 
@@ -315,7 +313,6 @@ CG_General
 */
 static void CG_General( centity_t *cent )
 {
-	static refEntity_t ent; // static for proper alignment in QVMs
 	entityState_t *s1;
 
 	s1 = &cent->currentState;
@@ -326,7 +323,7 @@ static void CG_General( centity_t *cent )
 		return;
 	}
 
-	memset( &ent, 0, sizeof( ent ) );
+	refEntity_t ent{};
 
 	// set frame
 
@@ -388,7 +385,6 @@ CG_Missile
 */
 static void CG_Missile( centity_t *cent )
 {
-	static refEntity_t        ent; // static for proper alignment in QVMs
 	entityState_t             *es;
 	const missileAttributes_t *ma;
 
@@ -416,7 +412,7 @@ static void CG_Missile( centity_t *cent )
 	}
 
 	// create the render entity
-	memset( &ent, 0, sizeof( ent ) );
+	refEntity_t ent{};
 	VectorCopy( cent->lerpOrigin, ent.origin );
 	VectorCopy( cent->lerpOrigin, ent.oldorigin );
 
@@ -528,9 +524,7 @@ static void CG_Missile( centity_t *cent )
 	// Add trail system.
 	if ( ma->trailSystem && !CG_IsTrailSystemValid( &cent->missileTS ) )
 	{
-		cent->missileTS = CG_SpawnNewTrailSystem( ma->trailSystem );
-
-		if ( CG_IsTrailSystemValid( &cent->missileTS ) )
+		if ( ( cent->missileTS = CG_SpawnNewTrailSystem( ma->trailSystem ) ) != nullptr )
 		{
 			// TODO: Make attachment to tags on missile models work.
 			/*const char *tag;
@@ -576,13 +570,12 @@ CG_Mover
 */
 static void CG_Mover( centity_t *cent )
 {
-	static refEntity_t ent; // static for proper alignment in QVMs
 	entityState_t *s1;
 
 	s1 = &cent->currentState;
 
 	// create the render entity
-	memset( &ent, 0, sizeof( ent ) );
+	refEntity_t ent{};
 	VectorCopy( cent->lerpOrigin, ent.origin );
 	VectorCopy( cent->lerpOrigin, ent.oldorigin );
 	AnglesToAxis( cent->lerpAngles, ent.axis );
@@ -621,13 +614,12 @@ CG_Portal
 */
 static void CG_Portal( centity_t *cent )
 {
-	static refEntity_t ent; // static for proper alignment in QVMs
 	entityState_t *s1;
 
 	s1 = &cent->currentState;
 
 	// create the render entity
-	memset( &ent, 0, sizeof( ent ) );
+	refEntity_t ent{};
 	VectorCopy( cent->lerpOrigin, ent.origin );
 	VectorCopy( s1->origin2, ent.oldorigin );
 	ByteToDir( s1->eventParm, ent.axis[ 0 ] );
@@ -689,7 +681,6 @@ CG_LightFlare
 */
 static void CG_LightFlare( centity_t *cent )
 {
-	static refEntity_t flare; // static for proper alignment in QVMs
 	entityState_t *es;
 	vec3_t        forward, delta;
 	float         len;
@@ -701,7 +692,7 @@ static void CG_LightFlare( centity_t *cent )
 	es = &cent->currentState;
 
 	//don't draw light flares
-	if ( cg_lightFlare.integer == FLARE_OFF )
+	if ( cg_lightFlare.Get() == FLARE_OFF )
 	{
 		return;
 	}
@@ -716,7 +707,7 @@ static void CG_LightFlare( centity_t *cent )
 
 	trap_AddVisTestToScene( cent->lfs.hTest, es->origin, 16.0f, 8.0f );
 
-	memset( &flare, 0, sizeof( flare ) );
+	refEntity_t flare{};
 
 	flare.reType = refEntityType_t::RT_SPRITE;
 	flare.customShader = cgs.gameShaders[ es->modelindex ];
@@ -752,7 +743,7 @@ static void CG_LightFlare( centity_t *cent )
 	if ( maxAngle > 0.0f )
 	{
 		float radiusMod = 1.0f - ( 180.0f - RAD2DEG(
-						   acos( DotProduct( delta, forward ) ) ) ) / maxAngle;
+						   acosf( DotProduct( delta, forward ) ) ) ) / maxAngle;
 
 		if ( radiusMod < 0.0f )
 		{
@@ -770,11 +761,11 @@ static void CG_LightFlare( centity_t *cent )
 	VectorMA( flare.origin, -flare.radius, delta, end );
 	VectorMA( cg.refdef.vieworg, flare.radius, delta, start );
 
-	if ( cg_lightFlare.integer == FLARE_REALFADE )
+	if ( cg_lightFlare.Get() == FLARE_REALFADE )
 	{
 		ratio = newStatus;
 	}
-	else if ( cg_lightFlare.integer == FLARE_TIMEFADE )
+	else if ( cg_lightFlare.Get() == FLARE_TIMEFADE )
 	{
 		//draw timed flares
 		if ( newStatus <= 0.5f && cent->lfs.status )
@@ -811,7 +802,7 @@ static void CG_LightFlare( centity_t *cent )
 			}
 		}
 	}
-	else if ( cg_lightFlare.integer == FLARE_NOFADE )
+	else if ( cg_lightFlare.Get() == FLARE_NOFADE )
 	{
 		//flare source occluded
 		if ( newStatus <= 0.5f )
@@ -976,7 +967,7 @@ static void CG_CalcEntityLerpPositions( centity_t *cent )
 	int timeshift = 0;
 
 	// if this player does not want to see extrapolated players
-	if ( !cg_smoothClients.integer )
+	if ( !cg_smoothClients.Get() )
 	{
 		// make sure the clients use TR_INTERPOLATE
 		if ( cent->currentState.number < MAX_CLIENTS )
@@ -1001,7 +992,7 @@ static void CG_CalcEntityLerpPositions( centity_t *cent )
 		return;
 	}
 
-	if ( cg_projectileNudge.integer &&
+	if ( cg_projectileNudge.Get() &&
 	     !cg.demoPlayback &&
 	     cent->currentState.eType == entityType_t::ET_MISSILE &&
 	     !( cg.snap->ps.pm_flags & PMF_FOLLOW ) )
@@ -1049,17 +1040,17 @@ CG_CEntityPVSEnter
 */
 static void CG_CEntityPVSEnter( centity_t *cent )
 {
-	entityState_t *es = &cent->currentState;
+	entityState_t &es = cent->currentState;
 
-	if ( cg_debugPVS.integer )
+	if ( cg_debugPVS.Get() )
 	{
 		Log::Debug( "Entity %d entered PVS", cent->currentState.number );
 	}
 
-	switch ( es->eType )
+	switch ( es.eType )
 	{
 		case entityType_t::ET_BUILDABLE:
-			cent->lastBuildableHealth = es->generic1;
+			cent->lastBuildableHealth = CG_Health(es);
 			break;
 
 		case entityType_t::ET_LIGHTFLARE:
@@ -1087,7 +1078,7 @@ static void CG_CEntityPVSEnter( centity_t *cent )
 	//when a buildable enters the PVS
 	cent->buildableAnim = BANIM_NONE;
 	cent->lerpFrame.animationNumber = BANIM_NONE;
-	cent->oldBuildableAnim = (buildableAnimNumber_t) es->legsAnim;
+	cent->oldBuildableAnim = (buildableAnimNumber_t) es.legsAnim;
 	cent->radarVisibility = 0.0f;
 
 	cent->pvsEnterTime = cg.time;
@@ -1103,7 +1094,7 @@ static void CG_CEntityPVSLeave( centity_t *cent )
 	int           i;
 	entityState_t *es = &cent->currentState;
 
-	if ( cg_debugPVS.integer )
+	if ( cg_debugPVS.Get() )
 	{
 		Log::Debug( "Entity %d left PVS", cent->currentState.number );
 	}
@@ -1115,7 +1106,8 @@ static void CG_CEntityPVSLeave( centity_t *cent )
 			{
 				if ( CG_IsTrailSystemValid( &cent->level2ZapTS[ i ] ) )
 				{
-					CG_DestroyTrailSystem( &cent->level2ZapTS[ i ] );
+					CG_DestroyTrailSystem( cent->level2ZapTS[ i ] );
+					cent->level2ZapTS[ i ] = nullptr;
 				}
 			}
 			break;
@@ -1162,7 +1154,8 @@ static void CG_CEntityPVSLeave( centity_t *cent )
 	// Destroy missile TS.
 	if ( CG_IsTrailSystemValid( &cent->missileTS ) )
 	{
-		CG_DestroyTrailSystem( &cent->missileTS );
+		CG_DestroyTrailSystem( cent->missileTS );
+		cent->missileTS = nullptr;
 	}
 
 	// Lazy TODO: Destroy more PS/TS here
@@ -1353,11 +1346,10 @@ void CG_AddPacketEntities()
 	}
 
 	//make an attempt at drawing bounding boxes of selected entity types
-	if ( cg_drawBBOX.integer )
+	if ( cg_drawBBOX.Get() > 0 )
 	{
 		for ( unsigned num = 0; num < cg.snap->entities.size(); num++ )
 		{
-			float         x, zd, zu;
 			vec3_t        mins, maxs;
 			entityState_t *es;
 
@@ -1367,22 +1359,47 @@ void CG_AddPacketEntities()
 			switch ( es->eType )
 			{
 				case entityType_t::ET_MISSILE:
-				case entityType_t::ET_CORPSE:
-					x = ( es->solid & 255 );
-					zd = ( ( es->solid >> 8 ) & 255 );
-					zu = ( ( es->solid >> 16 ) & 255 ) - 32;
+					BG_MissileBounds( BG_Missile( es->weapon ), mins, maxs );
+					CG_DrawBoundingBox( cg_drawBBOX.Get(), cent->lerpOrigin, mins, maxs );
+					break;
 
-					mins[ 0 ] = mins[ 1 ] = -x;
-					maxs[ 0 ] = maxs[ 1 ] = x;
-					mins[ 2 ] = -zd;
-					maxs[ 2 ] = zu;
-
-					CG_DrawBoundingBox( cg_drawBBOX.integer, cent->lerpOrigin, mins, maxs );
+				case entityType_t::ET_FIRE:
+					CG_DrawSphere( es->origin, FIRE_DAMAGE_RADIUS,
+					               cgs.media.plainColorShader, Color::Color(1, 0, 0, 0.2) );
 					break;
 
 				default:
 					break;
 			}
 		}
+	}
+}
+
+// see also G_Team in src/sgame/sg_ents.cpp
+team_t CG_Team(const entityState_t &es)
+{
+	switch (es.eType)
+	{
+		case entityType_t::ET_PLAYER:
+		{
+			clientInfo_t &ci = cgs.clientinfo[es.clientNum];
+			return (team_t) ci.team;
+		}
+		case entityType_t::ET_BUILDABLE:
+			return (team_t) es.modelindex2;
+		default:
+			return TEAM_NONE;
+	}
+}
+
+int CG_Health(const entityState_t &es)
+{
+	switch (es.eType)
+	{
+		case entityType_t::ET_PLAYER:
+		case entityType_t::ET_BUILDABLE:
+			return es.generic1;
+		default:
+			return 0;
 	}
 }

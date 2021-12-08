@@ -53,11 +53,6 @@ static void CG_ParseScores()
 
 	memset( cg.scores, 0, sizeof( cg.scores ) );
 
-	if ( cg_debugRandom.integer )
-	{
-		Log::Debug( "cg.numScores: %d", cg.numScores );
-	}
-
 	for ( i = 0; i < cg.numScores; i++ )
 	{
 		//
@@ -95,6 +90,7 @@ static void CG_ParseTeamInfo()
 
 	count = trap_Argc();
 
+	team_t myteam = static_cast<team_t>( cg.snap->ps.persistant[ PERS_TEAM ] );
 	for ( i = 1; i < count; ++i ) // i is also incremented when writing into cgs.clientinfo
 	{
 		client = atoi( CG_Argv( i ) );
@@ -106,7 +102,7 @@ static void CG_ParseTeamInfo()
 		}
 
 		// wrong team? skip to the next one
-		if ( cgs.clientinfo[ client ].team != cg.snap->ps.persistant[ PERS_TEAM ] )
+		if ( cgs.clientinfo[ client ].team != myteam )
 		{
 			return;
 		}
@@ -116,7 +112,7 @@ static void CG_ParseTeamInfo()
 		cgs.clientinfo[ client ].curWeaponClass = atoi( CG_Argv( ++i ) );
 		cgs.clientinfo[ client ].credit         = atoi( CG_Argv( ++i ) );
 
-		if( cg.snap->ps.persistant[ PERS_TEAM ] != TEAM_ALIENS )
+		if( myteam != TEAM_ALIENS )
 		{
 			cgs.clientinfo[ client ].upgrade = atoi( CG_Argv( ++i ) );
 		}
@@ -142,8 +138,7 @@ void CG_ParseServerinfo()
 	cgs.timelimit          = atoi( Info_ValueForKey( info, "timelimit" ) );
 	cgs.maxclients         = atoi( Info_ValueForKey( info, "sv_maxclients" ) );
 
-	// TODO: Remove this one.
-	cgs.powerReactorRange  = atoi( Info_ValueForKey( info, "g_powerReactorRange" ) );
+	cgs.devolveMaxBaseDistance = atof( Info_ValueForKey( info, "g_devolveMaxBaseDistance" ) );
 
 	cgs.momentumHalfLife  = atof( Info_ValueForKey( info, "g_momentumHalfLife" ) );
 	cgs.unlockableMinTime = atof( Info_ValueForKey( info, "g_unlockableMinTime" ) );
@@ -152,11 +147,11 @@ void CG_ParseServerinfo()
 	cgs.buildPointRecoveryInitialRate  = atof( Info_ValueForKey( info, "g_BPRecoveryInitialRate" ) );
 	cgs.buildPointRecoveryRateHalfLife = atof( Info_ValueForKey( info, "g_BPRecoveryRateHalfLife" ) );
 
-	Q_strncpyz( cgs.mapname, Info_ValueForKey( info, "mapname" ), sizeof(cgs.mapname) );
+	BG_SetForbiddenEquipment(  std::string( Info_ValueForKey( info, "g_disabledEquipment"  ) ) );
+	BG_SetForbiddenClasses(    std::string( Info_ValueForKey( info, "g_disabledClasses"    ) ) );
+	BG_SetForbiddenBuildables( std::string( Info_ValueForKey( info, "g_disabledBuildables" ) ) );
 
-	// pass some of these to UI
-	trap_Cvar_Set( "ui_momentumHalfLife", va( "%f", cgs.momentumHalfLife ) );
-	trap_Cvar_Set( "ui_unlockableMinTime",  va( "%f", cgs.unlockableMinTime ) );
+	Q_strncpyz( cgs.mapname, Info_ValueForKey( info, "mapname" ), sizeof(cgs.mapname) );
 }
 
 /*
@@ -285,21 +280,6 @@ static void CG_ConfigStringModified()
 	{
 		cgs.voteTime[ num - CS_VOTE_TIME ] = atoi( str );
 		cgs.voteModified[ num - CS_VOTE_TIME ] = true;
-
-		if ( num - CS_VOTE_TIME == TEAM_NONE )
-		{
-			trap_Cvar_Set( "ui_voteActive", cgs.voteTime[ TEAM_NONE ] ? "1" : "0" );
-		}
-		else if ( num - CS_VOTE_TIME == TEAM_ALIENS )
-		{
-			trap_Cvar_Set( "ui_alienTeamVoteActive",
-			               cgs.voteTime[ TEAM_ALIENS ] ? "1" : "0" );
-		}
-		else if ( num - CS_VOTE_TIME == TEAM_HUMANS )
-		{
-			trap_Cvar_Set( "ui_humanTeamVoteActive",
-			               cgs.voteTime[ TEAM_HUMANS ] ? "1" : "0" );
-		}
 	}
 	else if ( num >= CS_VOTE_YES && num < CS_VOTE_YES + NUM_TEAMS )
 	{
@@ -382,7 +362,7 @@ require a reload of all the media
 */
 static void CG_MapRestart()
 {
-	if ( cg_showmiss.integer )
+	if ( cg_showmiss.Get() )
 	{
 		Log::Debug( "CG_MapRestart" );
 	}
@@ -401,7 +381,7 @@ static void CG_MapRestart()
 
 	// we really should clear more parts of cg here and stop sounds
 
-	trap_Cvar_Set( "cg_thirdPerson", "0" );
+	cg_thirdPerson.Set(false);
 
 	CG_OnMapRestart();
 }
@@ -699,11 +679,11 @@ void CG_Menu( int menuType, int arg )
 			shortMsg = _("You cannot evolve until your build timer expires");
 			break;
 
-		case MN_A_INFEST:
-			trap_Cvar_Set( "ui_currentClass",
-			               va( "%d %d", cg.snap->ps.stats[ STAT_CLASS ],
-			                   cg.snap->ps.persistant[ PERS_CREDIT ] ) );
+		case MN_A_EVOLVEWEAPONTIMER:
+			shortMsg = _("Wait a second after attacking or evolving");
+			break;
 
+		case MN_A_INFEST:
 			menu = ROCKETMENU_ALIENEVOLVE;
 			break;
 
@@ -743,16 +723,16 @@ void CG_Menu( int menuType, int arg )
 	{
 		Rocket_DocumentAction( rocketInfo.menu[ menu ].id, "show" );
 	}
-	else if ( longMsg && cg_disableWarningDialogs.integer == 0 )
+	else if ( longMsg && cg_disableWarningDialogs.Get() == 0 )
 	{
 		CG_CenterPrint( longMsg, SCREEN_HEIGHT * 0.30, BIGCHAR_WIDTH );
 
-		if ( shortMsg && cg_disableWarningDialogs.integer < 2 )
+		if ( shortMsg && cg_disableWarningDialogs.Get() < 2 )
 		{
 			Log::Notice( shortMsg );
 		}
 	}
-	else if ( shortMsg && cg_disableWarningDialogs.integer < 2 )
+	else if ( shortMsg && cg_disableWarningDialogs.Get() < 2 )
 	{
 		Log::Notice( shortMsg );
 	}
@@ -789,7 +769,7 @@ static void CG_Say( const char *name, int clientNum, saymode_t mode, const char 
 			tcolor = Color::Cyan;
 		}
 
-		if ( cg_chatTeamPrefix.integer )
+		if ( cg_chatTeamPrefix.Get() )
 		{
 			Com_sprintf( prefix, sizeof( prefix ), "[%s%c^*] ",
 			             Color::ToString( tcolor ).c_str(),
@@ -859,7 +839,7 @@ static void CG_Say( const char *name, int clientNum, saymode_t mode, const char 
 	{
 		case SAY_ALL:
 			// might already be ignored but in that case no harm is done
-			if ( cg_teamChatsOnly.integer )
+			if ( cg_teamChatsOnly.Get() )
 			{
 				ignore = S_SKIPNOTIFY;
 			}
@@ -1029,7 +1009,7 @@ static void CG_ParseVoice()
 		return;
 	}
 
-	if ( cg_teamChatsOnly.integer && vChan != VOICE_CHAN_TEAM )
+	if ( cg_teamChatsOnly.Get() && vChan != VOICE_CHAN_TEAM )
 	{
 		return;
 	}
@@ -1067,7 +1047,7 @@ static void CG_ParseVoice()
 		}
 	}
 
-	if ( !cg_noVoiceText.integer )
+	if ( !cg_noVoiceText.Get() )
 	{
 		switch ( vChan )
 		{
@@ -1089,7 +1069,7 @@ static void CG_ParseVoice()
 	}
 
 	// playing voice audio tracks disabled
-	if ( cg_noVoiceChats.integer )
+	if ( cg_noVoiceChats.Get() )
 	{
 		return;
 	}
@@ -1287,11 +1267,7 @@ static void CG_VCommand()
 
 	if ( !Q_stricmp( cmd, "grenade" ) )
 	{
-		trap_SendClientCommand( cg_cmdGrenadeThrown.string );
-	}
-	else if ( !Q_stricmp( cmd, "needhealth" ) )
-	{
-		trap_SendClientCommand( cg_cmdNeedHealth.string );
+		trap_SendClientCommand( cg_cmdGrenadeThrown.Get().c_str() );
 	}
 
 	recurse = 0;
@@ -1328,14 +1304,8 @@ static void CG_PmoveParams_f() {
 
 	cg.pmoveParams.synchronous = atoi(arg1);
 	cg.pmoveParams.fixed = atoi(arg2);
-	cg.pmoveParams.msec = atoi(arg3);
+	cg.pmoveParams.msec = Math::Clamp( atoi(arg3), 8, 33 );
 	cg.pmoveParams.accurate = atoi(arg4);
-
-	if (cg.pmoveParams.msec < 8) {
-		cg.pmoveParams.msec = 8;
-	} else if (cg.pmoveParams.msec > 33) {
-		cg.pmoveParams.msec = 33;
-	}
 }
 
 static const consoleCommand_t svcommands[] =

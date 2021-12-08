@@ -71,7 +71,7 @@ float G_RGSPredictEfficiencyDelta(vec3_t origin, team_t team) {
 
 	buildpointLogger.Debug("Predicted efficiency of new miner itself: %f.", delta);
 
-	ForEntities<MiningComponent>([&] (Entity& miner, MiningComponent& miningComponent) {
+	ForEntities<MiningComponent>([&] (Entity& miner, MiningComponent&) {
 		if (G_Team(miner.oldEnt) != team) return;
 
 		delta += RGSPredictEfficiencyLoss(miner, origin);
@@ -100,14 +100,16 @@ void G_UpdateBuildPointBudgets() {
 void G_RecoverBuildPoints() {
 	static int nextBuildPoint[NUM_TEAMS] = {0};
 
-	float rate = g_buildPointRecoveryInititalRate.value /
+	float rate = g_buildPointRecoveryInitialRate.Get() /
 	             std::pow(2.0f, (float)level.matchTime /
-	                            (60000.0f * g_buildPointRecoveryRateHalfLife.value));
-	int interval = (int)(60000.0f / rate);
-	int nextBuildPointTime = level.time + interval;
+	                            (60000.0f * g_buildPointRecoveryRateHalfLife.Get()));
+	float interval = 60000.0f / rate;
 
-	// The interval grows exponentially, so check for an overflow.
-	if (nextBuildPointTime < level.time) return;
+	// The interval grows exponentially, so check for an excessively large value which could cause overflow.
+	// The maximum allowed game time is 0x70000000 (7 << 28); limit interval to 1 << 27.
+	if (interval > 0x1.0p27f) return;
+
+	int nextBuildPointTime = level.time + int(interval);
 
 	for (team_t team = TEAM_NONE; (team = G_IterateTeams(team)); ) {
 		if (!level.team[team].queuedBudget) {
@@ -206,7 +208,7 @@ void G_GetTotalBuildableValues(int *buildableValuesByTeam)
 		buildableValuesByTeam[team] = 0;
 	}
 
-	ForEntities<BuildableComponent>([&](Entity& entity, BuildableComponent& buildableComponent) {
+	ForEntities<BuildableComponent>([&](Entity& entity, BuildableComponent&) {
 		buildableValuesByTeam[G_Team(entity.oldEnt)] += G_BuildableDeconValue(entity.oldEnt);
 	});
 }

@@ -91,52 +91,44 @@ static AIValue_t botTeam( gentity_t *self, const AIValue_t* )
 
 static AIValue_t goalTeam( gentity_t *self, const AIValue_t* )
 {
-	return AIBoxInt( BotGetTargetTeam( self->botMind->goal ) );
+	if ( !self->botMind->goal.targetsValidEntity() )
+		return AIBoxInt( TEAM_NONE );
+	return AIBoxInt( G_Team( self->botMind->goal.getTargetedEntity() ) );
 }
 
 static AIValue_t goalType( gentity_t *self, const AIValue_t* )
 {
-	return AIBoxInt( Util::ordinal(BotGetTargetType( self->botMind->goal )) );
+	return AIBoxInt( Util::ordinal( self->botMind->goal.getTargetType() ) );
 }
 
-// TODO: Check if we can just check for HealthComponent.
 static AIValue_t goalDead( gentity_t *self, const AIValue_t* )
 {
-	bool dead = false;
-	botTarget_t *goal = &self->botMind->goal;
+	const gentity_t *target =
+		self->botMind->goal.getTargetedEntity();
 
-	if ( !BotTargetIsEntity( *goal ) )
+	if ( !self->botMind->goal.targetsValidEntity() )
 	{
-		dead = true;
+		return AIBoxInt( true );
 	}
-	else if ( BotGetTargetTeam( *goal ) == TEAM_NONE )
+	// is this needed?
+	else if ( target->s.eType == entityType_t::ET_BUILDABLE && target->buildableTeam == self->client->pers.team && !target->powered )
 	{
-		dead = true;
-	}
-	else if ( !Entities::IsAlive( self->botMind->goal.ent ) )
-	{
-		dead = true;
-	}
-	else if ( goal->ent->client && goal->ent->client->sess.spectatorState != SPECTATOR_NOT )
-	{
-		dead = true;
-	}
-	else if ( goal->ent->s.eType == entityType_t::ET_BUILDABLE && goal->ent->buildableTeam == self->client->pers.team && !goal->ent->powered )
-	{
-		dead = true;
+		return AIBoxInt( true );
 	}
 
-	return AIBoxInt( dead );
+	return AIBoxInt( false );
 }
 
 static AIValue_t goalBuildingType( gentity_t *self, const AIValue_t* )
 {
-	if ( BotGetTargetType( self->botMind->goal ) != entityType_t::ET_BUILDABLE )
+	if ( self->botMind->goal.getTargetType() != entityType_t::ET_BUILDABLE )
 	{
 		return AIBoxInt( BA_NONE );
 	}
 
-	return AIBoxInt( self->botMind->goal.ent->s.modelindex );
+	// entity has to be valid now or we would have returned BA_NONE
+	const gentity_t *ent = self->botMind->goal.getTargetedEntity();
+	return AIBoxInt( ent->s.modelindex );
 }
 
 static AIValue_t currentWeapon( gentity_t *self, const AIValue_t* )
@@ -199,7 +191,7 @@ static AIValue_t inAttackRange( gentity_t *self, const AIValue_t *params )
 		return AIBoxInt( false );
 	}
 
-	BotSetTarget( &target, e.ent, nullptr );
+	target = e.ent;
 
 	if ( BotTargetInAttackRange( self, target ) )
 	{
@@ -220,11 +212,11 @@ static AIValue_t isVisible( gentity_t *self, const AIValue_t *params )
 		return AIBoxInt( false );
 	}
 
-	BotSetTarget( &target, e.ent, nullptr );
+	target = e.ent;
 
 	if ( BotTargetIsVisible( self, target, CONTENTS_SOLID ) )
 	{
-		if ( BotEnemyIsValid( self, e.ent ) )
+		if ( BotEntityIsValidTarget( e.ent ) )
 		{
 			self->botMind->enemyLastSeen = level.time;
 		}
@@ -232,6 +224,11 @@ static AIValue_t isVisible( gentity_t *self, const AIValue_t *params )
 	}
 
 	return AIBoxInt( false );
+}
+
+static AIValue_t matchTime( gentity_t*, const AIValue_t* )
+{
+	return AIBoxInt( level.matchTime );
 }
 
 static AIValue_t directPathTo( gentity_t *self, const AIValue_t *params )
@@ -246,7 +243,7 @@ static AIValue_t directPathTo( gentity_t *self, const AIValue_t *params )
 	else if ( ed.ent )
 	{
 		botTarget_t target;
-		BotSetTarget( &target, ed.ent, nullptr );
+		target = ed.ent;
 		return AIBoxInt( BotPathIsWalkable( self, target ) );
 	}
 
@@ -260,14 +257,21 @@ static AIValue_t botCanEvolveTo( gentity_t *self, const AIValue_t *params )
 	return AIBoxInt( BotCanEvolveToClass( self, c ) );
 }
 
-static AIValue_t humanMomentum( gentity_t*, const AIValue_t* )
+// Returns a team's momentum for use in behavior trees.
+static AIValue_t momentum( gentity_t* self, const AIValue_t *params )
 {
-	return AIBoxInt( level.team[ TEAM_HUMANS ].momentum );
+	int requestedTeam = AIUnBoxInt( params[ 0 ] ); //is really a team_t
+	if( !G_IsPlayableTeam( requestedTeam ) )
+	{
+		Log::Warn( "invalid argument %d to 'momentum' in behavior tree", requestedTeam );
+		return AIBoxInt( 0 );
+	}
+	return AIBoxInt( level.team[ requestedTeam ].momentum );
 }
 
-static AIValue_t alienMomentum( gentity_t*, const AIValue_t* )
+static AIValue_t aliveTime( gentity_t*self, const AIValue_t* )
 {
-	return AIBoxInt( level.team[ TEAM_ALIENS ].momentum );
+	return AIBoxInt( level.time - self->botMind->spawnTime );
 }
 
 static AIValue_t randomChance( gentity_t*, const AIValue_t* )
@@ -275,28 +279,33 @@ static AIValue_t randomChance( gentity_t*, const AIValue_t* )
 	return AIBoxFloat( random() );
 }
 
-static AIValue_t cvarInt( gentity_t*, const AIValue_t *params )
+// Read a cvar, no matter its type
+static AIValue_t cvar( gentity_t*, const AIValue_t *params )
 {
-	vmCvar_t *c = G_FindCvar( AIUnBoxString( params[ 0 ] ) );
+	// TODO: improve performance when the need arises
+	// This guess the type of the cvar from what successfully parses.
+	// You may want to change that someday.
+	std::string cvar = AIUnBoxString( params[ 0 ] );
+	bool boolean;
+	int integer;
+	float floating;
 
-	if ( !c )
+	if ( Cvar::ParseCvarValue( Cvar::GetValue( cvar ), boolean )  )
 	{
-		return AIBoxInt( 0 );
+		return AIBoxInt( boolean ? 1 : 0 );
+	}
+	if ( Cvar::ParseCvarValue( Cvar::GetValue( cvar ), integer )  )
+	{
+		return AIBoxInt( integer );
+	}
+	if ( Cvar::ParseCvarValue( Cvar::GetValue( cvar ), floating )  )
+	{
+		return AIBoxFloat( floating );
 	}
 
-	return AIBoxInt( c->integer );
-}
-
-static AIValue_t cvarFloat( gentity_t*, const AIValue_t *params )
-{
-	vmCvar_t *c = G_FindCvar( AIUnBoxString( params[ 0 ] ) );
-
-	if ( !c )
-	{
-		return AIBoxFloat( 0 );
-	}
-
-	return AIBoxFloat( c->value );
+	Log::Warn("Bot: could not read cvar '%s' as"
+			" a number or a boolean", cvar);
+	return AIBoxInt( 0 );
 }
 
 static AIValue_t percentHealth( gentity_t *self, const AIValue_t *params )
@@ -323,39 +332,39 @@ static AIValue_t stuckTime( gentity_t *self, const AIValue_t* )
 static const struct AIConditionMap_s
 {
 	const char    *name;
-	AIValueType_t retType;
 	AIFunc        func;
 	int           nparams;
 } conditionFuncs[] =
 {
-	{ "alertedToEnemy",    VALUE_INT,   alertedToEnemy,    0 },
-	{ "alienMomentum",   VALUE_INT,   alienMomentum,   0 },
-	{ "baseRushScore",     VALUE_FLOAT, baseRushScore,     0 },
-	{ "buildingIsDamaged", VALUE_INT,   buildingIsDamaged, 0 },
-	{ "canEvolveTo",       VALUE_INT,   botCanEvolveTo,    1 },
-	{ "class",             VALUE_INT,   botClass,          0 },
-	{ "cvarFloat",         VALUE_FLOAT, cvarFloat,         1 },
-	{ "cvarInt",           VALUE_INT,   cvarInt,           1 },
-	{ "directPathTo",      VALUE_INT,   directPathTo,      1 },
-	{ "distanceTo",        VALUE_FLOAT, distanceTo,        1 },
-	{ "goalBuildingType",  VALUE_INT,   goalBuildingType,  0 },
-	{ "goalIsDead",        VALUE_INT,   goalDead,          0 },
-	{ "goalTeam",          VALUE_INT,   goalTeam,          0 },
-	{ "goalType",          VALUE_INT,   goalType,          0 },
-	{ "haveUpgrade",       VALUE_INT,   haveUpgrade,       1 },
-	{ "haveWeapon",        VALUE_INT,   haveWeapon,        1 },
-	{ "healScore",         VALUE_FLOAT, healScore,         0 },
-	{ "humanMomentum",   VALUE_INT,   humanMomentum,   0 },
-	{ "inAttackRange",     VALUE_INT,   inAttackRange,     1 },
-	{ "isVisible",         VALUE_INT,   isVisible,         1 },
-	{ "percentAmmo",       VALUE_FLOAT, percentAmmo,       0 },
-	{ "percentHealth",     VALUE_FLOAT, percentHealth,     1 },
-	{ "random",            VALUE_FLOAT, randomChance,      0 },
-	{ "skill",             VALUE_INT,   botSkill,          0 },
-	{ "stuckTime",         VALUE_INT,   stuckTime,         0 },
-	{ "team",              VALUE_INT,   botTeam,           0 },
-	{ "teamateHasWeapon",  VALUE_INT,   teamateHasWeapon,  1 },
-	{ "weapon",            VALUE_INT,   currentWeapon,     0 }
+	// It looks like behavior tree function names must be ordered alphabetically.
+	{ "alertedToEnemy",    alertedToEnemy,    0 },
+	{ "aliveTime",         aliveTime,         0 },
+	{ "baseRushScore",     baseRushScore,     0 },
+	{ "buildingIsDamaged", buildingIsDamaged, 0 },
+	{ "canEvolveTo",       botCanEvolveTo,    1 },
+	{ "class",             botClass,          0 },
+	{ "cvar",              cvar,              1 },
+	{ "directPathTo",      directPathTo,      1 },
+	{ "distanceTo",        distanceTo,        1 },
+	{ "goalBuildingType",  goalBuildingType,  0 },
+	{ "goalIsDead",        goalDead,          0 },
+	{ "goalTeam",          goalTeam,          0 },
+	{ "goalType",          goalType,          0 },
+	{ "haveUpgrade",       haveUpgrade,       1 },
+	{ "haveWeapon",        haveWeapon,        1 },
+	{ "healScore",         healScore,         0 },
+	{ "inAttackRange",     inAttackRange,     1 },
+	{ "isVisible",         isVisible,         1 },
+	{ "matchTime",         matchTime,         0 },
+	{ "momentum",          momentum,          1 },
+	{ "percentAmmo",       percentAmmo,       0 },
+	{ "percentHealth",     percentHealth,     1 },
+	{ "random",            randomChance,      0 },
+	{ "skill",             botSkill,          0 },
+	{ "stuckTime",         stuckTime,         0 },
+	{ "team",              botTeam,           0 },
+	{ "teamateHasWeapon",  teamateHasWeapon,  1 },
+	{ "weapon",            currentWeapon,     0 }
 };
 
 static const struct AIOpMap_s
@@ -519,7 +528,7 @@ static AIValue_t *parseFunctionParameters( pc_token_list **list, int *nparams, i
 		{
 			numParams++;
 		}
-		else if ( parse->token.string[ 0 ] != ',' )
+		else if ( parse->token.string[ 0 ] != ',' && parse->token.string[ 0 ] != '-' )
 		{
 			Log::Warn( "Invalid token %s in parameter list on line %d", parse->token.string, parse->token.line );
 			*list = parenEnd->next; // skip invalid function expression
@@ -586,7 +595,6 @@ static AIValueFunc_t *newValueFunc( pc_token_list **list )
 	}
 
 	v.expType = EX_FUNC;
-	v.retType = f->retType;
 	v.func =    f->func;
 	v.nparams = f->nparams;
 
@@ -918,7 +926,7 @@ static const struct AIActionMap_s
 	{ "aimAtGoal",         BotActionAimAtGoal,         0, 0 },
 	{ "alternateStrafe",   BotActionAlternateStrafe,   0, 0 },
 	{ "buy",               BotActionBuy,               1, 4 },
-	{ "changeGoal",        BotActionChangeGoal,        1, 1 },
+	{ "changeGoal",        BotActionChangeGoal,        1, 3 },
 	{ "classDodge",        BotActionClassDodge,        0, 0 },
 	{ "deactivateUpgrade", BotActionDeactivateUpgrade, 1, 1 },
 	{ "equip",             BotActionBuy,               0, 0 },
@@ -927,6 +935,7 @@ static const struct AIActionMap_s
 	{ "fight",             BotActionFight,             0, 0 },
 	{ "fireWeapon",        BotActionFireWeapon,        0, 0 },
 	{ "flee",              BotActionFlee,              0, 0 },
+	{ "gesture",           BotActionGesture,           0, 0 },
 	{ "heal",              BotActionHeal,              0, 0 },
 	{ "jump",              BotActionJump,              0, 0 },
 	{ "moveInDir",         BotActionMoveInDir,         1, 2 },
@@ -940,6 +949,7 @@ static const struct AIActionMap_s
 	{ "say",               BotActionSay,               2, 2 },
 	{ "strafeDodge",       BotActionStrafeDodge,       0, 0 },
 	{ "suicide",           BotActionSuicide,           0, 0 },
+	{ "teleport",          BotActionTeleport,          3, 3 },
 };
 
 /*
@@ -1256,6 +1266,7 @@ AIBehaviorTree_t *ReadBehaviorTree( const char *name, AITreeList_t *list )
 	D( UP_RADAR );
 	D( UP_JETPACK );
 	D( UP_GRENADE );
+	D( UP_FIREBOMB );
 	D( UP_MEDKIT );
 
 	// add weapons

@@ -89,7 +89,6 @@ sfxHandle_t CG_CustomSound( int clientNum, const char *soundName )
 	}
 
 	Sys::Drop( "Unknown custom sound: %s", soundName );
-	return 0;
 }
 
 /*
@@ -161,7 +160,7 @@ static bool CG_ParseCharacterFile( const char *filename, clientInfo_t *ci )
 			char* token = COM_Parse2( &text_p );
 			if ( !token || *token != '{' )
 			{
-				Log::Notice( "^1ERROR^*: Expected '{' but found '%s' in %s's character.cfg", token, ci->modelName );
+				Log::Warn( "Expected '{' but found '%s' in %s's character.cfg, skipping", token, ci->modelName );
 				continue;
 			}
 			while ( 1 )
@@ -304,8 +303,8 @@ static bool CG_ParseCharacterFile( const char *filename, clientInfo_t *ci )
 	return true;
 }
 
-static bool CG_RegisterPlayerAnimation( clientInfo_t *ci, const char *modelName, int anim, const char *animName,
-                                            bool loop, bool reversed, bool clearOrigin )
+static bool CG_RegisterPlayerAnimation( clientInfo_t *ci, const char *modelName, int anim,
+		const char *animName, bool loop, bool reversed, bool clearOrigin )
 {
 	char filename[ MAX_QPATH ], newModelName[ MAX_QPATH ];
 	int  frameRate;
@@ -336,9 +335,9 @@ static bool CG_RegisterPlayerAnimation( clientInfo_t *ci, const char *modelName,
 
 	if ( !ci->animations[ anim ].handle )
 	{
-		if ( cg_debugAnim.integer )
+		if ( cg_debugAnim.Get() )
 		{
-			Log::Notice( "Failed to load animation file %s\n", filename );
+			Log::Warn( "Failed to load animation file %s", filename );
 		}
 
 		return false;
@@ -1175,7 +1174,7 @@ NSPA_STAND, "idle", true, false, false )
 
 	if ( !CG_ParseAnimationFile( filename, ci ) )
 	{
-		Log::Notice( "Failed to load animation file %s\n", filename );
+		Log::Warn( "Failed to load animation file %s", filename );
 		return false;
 	}
 
@@ -1357,12 +1356,11 @@ static void CG_CopyClientInfoModel( clientInfo_t *from, clientInfo_t *to )
 
 /*
 ======================
-CG_GetCorpseNum
+GetCorpseInfo
 ======================
 */
-static int CG_GetCorpseNum( class_t class_ )
+static clientInfo_t *GetCorpseInfo( class_t class_ )
 {
-	int          i;
 	clientInfo_t *match;
 	char         *modelName;
 	char         *skinName;
@@ -1370,25 +1368,29 @@ static int CG_GetCorpseNum( class_t class_ )
 	modelName = BG_ClassModelConfig( class_ )->modelName;
 	skinName = BG_ClassModelConfig( class_ )->skinName;
 
-	for ( i = PCL_NONE + 1; i < PCL_NUM_CLASSES; i++ )
+	match = &cgs.corpseinfo[ class_ ];
+
+	if ( match->infoValid &&
+	     !Q_stricmp( modelName, match->modelName ) &&
+	     !Q_stricmp( skinName, match->skinName ) )
 	{
-		match = &cgs.corpseinfo[ i ];
+		// this clientinfo is identical, so use its handles
+		return match;
+	}
 
-		if ( !match->infoValid )
-		{
-			continue;
-		}
+	// happens when cg_lazyLoadModels is on
+	Log::Verbose( "lazily loading class %d corpseinfo", class_ );
+	CG_PrecacheClientInfo( class_, modelName, skinName );
 
-		if ( !Q_stricmp( modelName, match->modelName ) &&
-		     !Q_stricmp( skinName, match->skinName ) )
-		{
-			// this clientinfo is identical, so use its handles
-			return i;
-		}
+	if ( match->infoValid &&
+	     !Q_stricmp( modelName, match->modelName ) &&
+	     !Q_stricmp( skinName, match->skinName ) )
+	{
+		return match;
 	}
 
 	//something has gone horribly wrong
-	return -1;
+	return nullptr;
 }
 
 /*
@@ -1405,12 +1407,8 @@ static bool CG_ScanForExistingClientInfo( clientInfo_t *ci )
 	{
 		match = &cgs.corpseinfo[ i ];
 
-		if ( !match->infoValid )
-		{
-			continue;
-		}
-
-		if ( !Q_stricmp( ci->modelName, match->modelName ) &&
+		if ( match->infoValid &&
+		     !Q_stricmp( ci->modelName, match->modelName ) &&
 		     !Q_stricmp( ci->skinName, match->skinName ) )
 		{
 			// this clientinfo is identical, so use its handles
@@ -1658,7 +1656,7 @@ static void CG_SetLerpFrameAnimation( clientInfo_t *ci, lerpFrame_t *lf, int new
 		lf->animationTime = lf->frameTime + anim->initialLerp;
 	}
 
-	if ( cg_debugAnim.integer )
+	if ( cg_debugAnim.Get() )
 	{
 		Log::Warn( "Anim: %i", newAnimation );
 	}
@@ -1677,7 +1675,7 @@ static void CG_RunPlayerLerpFrame( clientInfo_t *ci, lerpFrame_t *lf, int newAni
 {
 	bool animChanged = false;
 
-    // see if the animation sequence is switching
+	// see if the animation sequence is switching
 	if ( newAnimation != lf->animationNumber || !lf->animation )
 	{
 		CG_SetLerpFrameAnimation( ci, lf, newAnimation, skel );
@@ -1705,7 +1703,7 @@ static void CG_RunCorpseLerpFrame( clientInfo_t *ci, lerpFrame_t *lf, int newAni
 	animation_t *anim;
 
 	// debugging tool to get no animations
-	if ( cg_animSpeed.integer == 0 )
+	if ( !cg_animSpeed.Get() )
 	{
 		lf->oldFrame = lf->frame = lf->backlerp = 0;
 		return;
@@ -1768,7 +1766,7 @@ static void CG_SegmentAnimation( centity_t *cent, lerpFrame_t *lf, refSkeleton_t
 
 	clientNum = cent->currentState.clientNum;
 
-	if ( cg_noPlayerAnims.integer )
+	if ( cg_noPlayerAnims.Get() )
 	{
 		*oldFrame = *frame = 0;
 		return;
@@ -1796,7 +1794,7 @@ static void CG_PlayerMD5AlienAnimation( centity_t *cent )
 
 	clientNum = cent->currentState.clientNum;
 
-	if ( cg_noPlayerAnims.integer )
+	if ( cg_noPlayerAnims.Get() )
 	{
 		return;
 	}
@@ -2026,16 +2024,16 @@ static void CG_PlayerAngles( centity_t *cent, const vec3_t srcAngles,
 	// torso
 	if ( cent->currentState.eFlags & EF_DEAD )
 	{
-		CG_SwingAngles( torsoAngles[ YAW ], 0, 0, cg_swingSpeed.value,
+		CG_SwingAngles( torsoAngles[ YAW ], 0, 0, cg_swingSpeed.Get(),
 		                &cent->pe.torso.yawAngle, &cent->pe.torso.yawing );
-		CG_SwingAngles( legsAngles[ YAW ], 0, 0, cg_swingSpeed.value,
+		CG_SwingAngles( legsAngles[ YAW ], 0, 0, cg_swingSpeed.Get(),
 		                &cent->pe.legs.yawAngle, &cent->pe.legs.yawing );
 	}
 	else
 	{
-		CG_SwingAngles( torsoAngles[ YAW ], 25, 90, cg_swingSpeed.value,
+		CG_SwingAngles( torsoAngles[ YAW ], 25, 90, cg_swingSpeed.Get(),
 		                &cent->pe.torso.yawAngle, &cent->pe.torso.yawing );
-		CG_SwingAngles( legsAngles[ YAW ], 40, 90, cg_swingSpeed.value,
+		CG_SwingAngles( legsAngles[ YAW ], 40, 90, cg_swingSpeed.Get(),
 		                &cent->pe.legs.yawAngle, &cent->pe.legs.yawing );
 	}
 
@@ -2172,7 +2170,7 @@ static void CG_PlayerWWSmoothing( centity_t *cent, vec3_t in[ 3 ], vec3_t out[ 3
 			           DotProduct( inAxis[ 1 ], lastAxis[ 1 ] ) +
 			           DotProduct( inAxis[ 2 ], lastAxis[ 2 ] );
 
-			rotAngle = RAD2DEG( acos( ( rotAngle - 1.0f ) / 2.0f ) );
+			rotAngle = RAD2DEG( acosf( ( rotAngle - 1.0f ) / 2.0f ) );
 
 			CrossProduct( lastAxis[ 0 ], inAxis[ 0 ], temp );
 			VectorCopy( temp, rotAxis );
@@ -2206,7 +2204,7 @@ static void CG_PlayerWWSmoothing( centity_t *cent, vec3_t in[ 3 ], vec3_t out[ 3
 		if ( cg.time < cent->pe.sList[ i ].time + MODEL_WWSMOOTHTIME )
 		{
 			stLocal = 1.0f - ( ( ( cent->pe.sList[ i ].time + MODEL_WWSMOOTHTIME ) - cg.time ) / MODEL_WWSMOOTHTIME );
-			sFraction = - ( cos( stLocal * M_PI ) + 1.0f ) / 2.0f;
+			sFraction = - ( cosf( stLocal * M_PI ) + 1.0f ) / 2.0f;
 
 			RotatePointAroundVector( outAxis[ 0 ], cent->pe.sList[ i ].rotAxis,
 			                         inAxis[ 0 ], sFraction * cent->pe.sList[ i ].rotAngle );
@@ -2292,12 +2290,12 @@ static void CG_PlayerNonSegAxis( centity_t *cent, vec3_t srcAngles, vec3_t nonSe
 	// torso
 	if ( cent->currentState.eFlags & EF_DEAD )
 	{
-		CG_SwingAngles( localAngles[ YAW ], 0, 0, cg_swingSpeed.value,
+		CG_SwingAngles( localAngles[ YAW ], 0, 0, cg_swingSpeed.Get(),
 		                &cent->pe.nonseg.yawAngle, &cent->pe.nonseg.yawing );
 	}
 	else
 	{
-		CG_SwingAngles( localAngles[ YAW ], 40, 90, cg_swingSpeed.value,
+		CG_SwingAngles( localAngles[ YAW ], 40, 90, cg_swingSpeed.Get(),
 		                &cent->pe.nonseg.yawAngle, &cent->pe.nonseg.yawing );
 	}
 
@@ -2417,22 +2415,15 @@ static void CG_JetpackAnimation( centity_t *cent, int *old, int *now, float *bac
 
 static void CG_PlayerUpgrades( centity_t *cent, refEntity_t *torso )
 {
-	static refEntity_t jetpack; // static for proper alignment in QVMs
-
-	// TODO: Remove this QVM relic.
-	// jetpack and battpack are never both in use together
-#	define radar jetpack
-
-	int           held, publicFlags;
 	entityState_t *es = &cent->currentState;
 
-	held        = es->modelindex;
-	publicFlags = es->modelindex2;
+	int held        = es->modelindex;
+	int publicFlags = es->modelindex2;
 
 	// jetpack model and effects
 	if ( held & ( 1 << UP_JETPACK ) )
 	{
-		memset( &jetpack, 0, sizeof( jetpack ) );
+		refEntity_t jetpack{};
 		VectorCopy( torso->lightingOrigin, jetpack.lightingOrigin );
 		jetpack.renderfx = torso->renderfx;
 
@@ -2529,7 +2520,7 @@ static void CG_PlayerUpgrades( centity_t *cent, refEntity_t *torso )
 	// battery pack
 	if ( held & ( 1 << UP_RADAR ) )
 	{
-		memset( &radar, 0, sizeof( radar ) );
+		refEntity_t radar{};
 		VectorCopy( torso->lightingOrigin, radar.lightingOrigin );
 		radar.renderfx = torso->renderfx;
 
@@ -2565,8 +2556,6 @@ static void CG_PlayerUpgrades( centity_t *cent, refEntity_t *torso )
 			               0.0f, 1.0f, 1.0f, 1.0f, 1.0f, false, size, true );
 		}
 	}
-
-#	undef battpack
 }
 
 /*
@@ -2579,7 +2568,6 @@ Float a sprite over the player's head
 static void CG_PlayerFloatSprite( centity_t *cent, qhandle_t shader )
 {
 	int         rf;
-	static refEntity_t ent; // static for proper alignment in QVMs
 
 	if ( cent->currentState.number == cg.snap->ps.clientNum && !cg.renderingThirdPerson )
 	{
@@ -2590,7 +2578,7 @@ static void CG_PlayerFloatSprite( centity_t *cent, qhandle_t shader )
 		rf = 0;
 	}
 
-	memset( &ent, 0, sizeof( ent ) );
+	refEntity_t ent{};
 	VectorCopy( cent->lerpOrigin, ent.origin );
 	ent.origin[ 2 ] += 48;
 	ent.reType = refEntityType_t::RT_SPRITE;
@@ -2651,7 +2639,7 @@ static bool CG_PlayerShadow( centity_t *cent, class_t class_ )
 		}
 	}
 
-	if ( cg_shadows.integer == Util::ordinal(shadowingMode_t::SHADOWING_NONE))
+	if ( cg_shadows.Get() == Util::ordinal(shadowingMode_t::SHADOWING_NONE))
 	{
 		return false;
 	}
@@ -2668,15 +2656,15 @@ static bool CG_PlayerShadow( centity_t *cent, class_t class_ )
 		return false;
 	}
 
-	if ( cg_shadows.integer > Util::ordinal(shadowingMode_t::SHADOWING_BLOB) &&
-	     cg_playerShadows.integer ) {
+	if ( cg_shadows.Get() > Util::ordinal(shadowingMode_t::SHADOWING_BLOB) &&
+	     cg_playerShadows.Get() ) {
 		// add inverse shadow map
 		{
 		  CG_StartShadowCaster( cent->lerpOrigin, mins, maxs );
 		}
 	}
 
-	if ( cg_shadows.integer != Util::ordinal(shadowingMode_t::SHADOWING_BLOB)) // no mark for stencil or projection shadows
+	if ( cg_shadows.Get() != Util::ordinal(shadowingMode_t::SHADOWING_BLOB)) // no mark for stencil or projection shadows
 	{
 		return true;
 	}
@@ -2695,13 +2683,13 @@ static bool CG_PlayerShadow( centity_t *cent, class_t class_ )
 
 static void CG_PlayerShadowEnd()
 {
-	if ( cg_shadows.integer == Util::ordinal(shadowingMode_t::SHADOWING_NONE))
+	if ( cg_shadows.Get() == Util::ordinal(shadowingMode_t::SHADOWING_NONE))
 	{
 		return;
 	}
 
-	if ( cg_shadows.integer > Util::ordinal(shadowingMode_t::SHADOWING_BLOB) &&
-	     cg_playerShadows.integer ) {
+	if ( cg_shadows.Get() > Util::ordinal(shadowingMode_t::SHADOWING_BLOB) &&
+	     cg_playerShadows.Get() ) {
 		CG_EndShadowCaster( );
 	}
 }
@@ -2720,7 +2708,7 @@ static void CG_PlayerSplash( centity_t *cent, class_t class_ )
 	trace_t trace;
 	int     contents;
 
-	if ( cg_shadows.integer == Util::ordinal(shadowingMode_t::SHADOWING_NONE))
+	if ( cg_shadows.Get() == Util::ordinal(shadowingMode_t::SHADOWING_NONE))
 	{
 		return;
 	}
@@ -2912,11 +2900,6 @@ CG_Player
 void CG_Player( centity_t *cent )
 {
 	clientInfo_t *ci;
-
-	// NOTE: legs is used for nonsegmented and skeletal models
-	//       this helps reduce code to be changed
-	refEntity_t legs, torso, head;
-
 	int           clientNum;
 	int           renderfx;
 	entityState_t *es = &cent->currentState;
@@ -2958,10 +2941,6 @@ void CG_Player( centity_t *cent )
 	{
 		altShaderIndex = CG_ALTSHADER_DEAD;
 	}
-	else if ( !(es->eFlags & EF_B_POWERED) )
-	{
-		altShaderIndex = CG_ALTSHADER_UNPOWERED;
-	}
 	else
 	{
 		altShaderIndex = CG_ALTSHADER_DEFAULT;
@@ -2978,17 +2957,17 @@ void CG_Player( centity_t *cent )
 		}
 	}
 
-	if ( cg_drawBBOX.integer && cg.renderingThirdPerson )
+	if ( cg_drawBBOX.Get() && cg.renderingThirdPerson )
 	{
 		vec3_t mins, maxs;
 
 		BG_ClassBoundingBox( class_, mins, maxs, nullptr, nullptr, nullptr );
-		CG_DrawBoundingBox( cg_drawBBOX.integer, cent->lerpOrigin, mins, maxs );
+		CG_DrawBoundingBox( cg_drawBBOX.Get(), cent->lerpOrigin, mins, maxs );
 	}
 
-	memset( &legs,    0, sizeof( legs ) );
-	memset( &torso,   0, sizeof( torso ) );
-	memset( &head,    0, sizeof( head ) );
+	// NOTE: legs is used for nonsegmented and skeletal models
+	//       this helps reduce code to be changed
+	refEntity_t legs{}, torso{}, head{};
 
 	VectorCopy( cent->lerpAngles, angles );
 	AnglesToAxis( cent->lerpAngles, tempAxis );
@@ -3422,33 +3401,21 @@ CG_Corpse
 */
 void CG_Corpse( centity_t *cent )
 {
-	refEntity_t   legs, torso, head;
 	clientInfo_t  *ci;
 	entityState_t *es = &cent->currentState;
-	int           corpseNum;
 	int           renderfx;
 	vec3_t        origin, liveZ, deadZ, deadMax;
 	float         scale;
 
-	corpseNum = CG_GetCorpseNum( (class_t) es->clientNum );
+	ci = GetCorpseInfo( (class_t) es->clientNum );
 
-	if ( corpseNum < 0 || corpseNum >= MAX_CLIENTS )
+	if ( ci == nullptr )
 	{
-		Sys::Drop( "Bad corpseNum on corpse entity: %d", corpseNum );
-	}
-
-	ci = &cgs.corpseinfo[ corpseNum ];
-
-	// it is possible to see corpses from disconnected players that may
-	// not have valid clientinfo
-	if ( !ci->infoValid )
-	{
+		Log::Warn( "Missing corpseinfo on corpse entity: %d", es->clientNum );
 		return;
 	}
 
-	memset( &legs, 0, sizeof( legs ) );
-	memset( &torso, 0, sizeof( torso ) );
-	memset( &head, 0, sizeof( head ) );
+	refEntity_t legs{}, torso{}, head{};
 
 	VectorCopy( cent->lerpOrigin, origin );
 	BG_ClassBoundingBox( es->clientNum, liveZ, nullptr, nullptr, deadZ, deadMax );
@@ -3473,7 +3440,7 @@ void CG_Corpse( centity_t *cent )
 	}
 
 	//set the correct frame (should always be dead)
-	if ( cg_noPlayerAnims.integer )
+	if ( cg_noPlayerAnims.Get() )
 	{
 		legs.oldframe = legs.frame = torso.oldframe = torso.frame = 0;
 	}
@@ -3482,7 +3449,7 @@ void CG_Corpse( centity_t *cent )
 		if ( ci->gender == GENDER_NEUTER )
 		{
 			memset( &cent->pe.nonseg, 0, sizeof( lerpFrame_t ) );
-			CG_RunCorpseLerpFrame( ci, &cent->pe.nonseg, NSPA_DEATH1 );
+			CG_RunCorpseLerpFrame( ci, &cent->pe.nonseg, es->legsAnim );
 			legs.oldframe = cent->pe.nonseg.oldFrame;
 			legs.frame = cent->pe.nonseg.frame;
 			legs.backlerp = cent->pe.nonseg.backlerp;
@@ -3490,7 +3457,7 @@ void CG_Corpse( centity_t *cent )
 		else
 		{
 			memset( &cent->pe.legs, 0, sizeof( lerpFrame_t ) );
-			CG_RunCorpseLerpFrame( ci, &cent->pe.legs, BOTH_DEATH1 );
+			CG_RunCorpseLerpFrame( ci, &cent->pe.legs, es->legsAnim );
 			legs.oldframe = cent->pe.legs.oldFrame;
 			legs.frame = cent->pe.legs.frame;
 			legs.backlerp = cent->pe.legs.backlerp;
@@ -3666,11 +3633,6 @@ void CG_ResetPlayerEntity( centity_t *cent )
 	cent->pe.nonseg.yawing = false;
 	cent->pe.nonseg.pitchAngle = cent->rawAngles[ PITCH ];
 	cent->pe.nonseg.pitching = false;
-
-	if ( cg_debugPosition.integer )
-	{
-		Log::Debug( "%i ResetPlayerEntity yaw=%.2f", cent->currentState.number, cent->pe.torso.yawAngle );
-	}
 }
 
 /*
@@ -3744,7 +3706,7 @@ void CG_InitClasses()
 {
 	int i;
 
-	Com_Memset( cg_classes, 0, sizeof( cg_classes ) );
+	memset( cg_classes, 0, sizeof( cg_classes ) );
 
 	for ( i = PCL_NONE + 1; i < PCL_NUM_CLASSES; i++ )
 	{
@@ -3752,7 +3714,7 @@ void CG_InitClasses()
 
 		if ( icon )
 		{
-			cg_classes[ i ].classIcon = trap_R_RegisterShader( icon, RSF_DEFAULT );
+			cg_classes[ i ].classIcon = trap_R_RegisterShader( icon, (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
 			if ( !cg_classes[ i ].classIcon )
 			{

@@ -60,29 +60,22 @@ bool G_SpawnString( const char *key, const char *defaultString, char **out )
 }
 
 /**
- * spawns a string and sets it as a cvar.
- *
- * use this with caution, as it might persist unprepared cvars (see cvartable)
+ * spawns a string and sets it as a cvar, or reset the cvar to its default
+ * value if not set.
+ * This allows loading values from the map, without keeping the garbage from
+ * the previous map if nothing is set.
  */
-static bool G_SpawnStringIntoCVarIfSet( const char *key, const char *cvarName )
+static void G_SpawnStringIntoCVar( const char *key, Cvar::CvarProxy& cvar )
 {
-	char     *tmpString;
-
-	if ( G_SpawnString( key, "", &tmpString ) )
+	char *str = nullptr;
+	if ( G_SpawnString( key, nullptr, &str ) )
 	{
-		trap_Cvar_Set( cvarName, tmpString );
-		return true;
+		Cvar::SetValue( cvar.Name(), str );
 	}
-
-	return false;
-}
-
-static void G_SpawnStringIntoCVar( const char *key, const char *cvarName )
-{
-	char     *tmpString;
-
-	G_SpawnString( key, "", &tmpString );
-	trap_Cvar_Set( cvarName, tmpString );
+	else
+	{
+		cvar.Reset();
+	}
 }
 
 bool G_SpawnBoolean( const char *key, bool defaultqboolean )
@@ -457,16 +450,16 @@ bool G_HandleEntityVersions( entityClassDescriptor_t *spawnDescription, gentity_
 
 	if ( !spawnDescription->replacement || !Q_stricmp(entity->classname, spawnDescription->replacement))
 	{
-		if ( g_debugEntities.integer > -2 )
+		if ( g_debugEntities.Get() > -2 )
 			Log::Warn("Class %s has been marked deprecated but no replacement has been supplied", etos( entity ) );
 
 		return false;
 	}
 
-	if ( g_debugEntities.integer >= 0 ) //dont't warn about anything with -1 or lower
+	if ( g_debugEntities.Get() >= 0 ) //dont't warn about anything with -1 or lower
 	{
 		if( spawnDescription->versionState < ENT_V_TMPORARY
-		|| ( g_debugEntities.integer >= 1 && spawnDescription->versionState >= ENT_V_TMPORARY) )
+		|| ( g_debugEntities.Get() >= 1 && spawnDescription->versionState >= ENT_V_TMPORARY) )
 		{
 			Log::Warn("Entity %s uses a deprecated classtype — use the class ^5%s^* instead", etos( entity ), spawnDescription->replacement );
 		}
@@ -481,7 +474,7 @@ bool G_ValidateEntity( entityClassDescriptor_t *entityClass, gentity_t *entity )
 		case CHAIN_ACTIVE:
 			if(!entity->callTargetCount) //check target usage for backward compatibility
 			{
-				if( g_debugEntities.integer > -2 )
+				if( g_debugEntities.Get() > -2 )
 					Log::Warn("Entity %s needs to call or target to something — Removing it.", etos( entity ) );
 				return false;
 			}
@@ -490,7 +483,7 @@ bool G_ValidateEntity( entityClassDescriptor_t *entityClass, gentity_t *entity )
 		case CHAIN_PASSIV:
 			if(!entity->names[0])
 			{
-				if( g_debugEntities.integer > -2 )
+				if( g_debugEntities.Get() > -2 )
 					Log::Warn("Entity %s needs a name, so other entities can target it — Removing it.", etos( entity ) );
 				return false;
 			}
@@ -499,7 +492,7 @@ bool G_ValidateEntity( entityClassDescriptor_t *entityClass, gentity_t *entity )
 			if((!entity->callTargetCount) //check target usage for backward compatibility
 					|| !entity->names[0])
 			{
-				if( g_debugEntities.integer > -2 )
+				if( g_debugEntities.Get() > -2 )
 					Log::Warn("Entity %s needs a name as well as a target to conditionally relay the firing — Removing it.", etos( entity ) );
 				return false;
 			}
@@ -529,7 +522,7 @@ bool G_CallSpawnFunction( gentity_t *spawnedEntity )
 	if ( !spawnedEntity->classname )
 	{
 		//don't even warn about spawning-errors with -2 (maps might still work at least partly if we ignore these willingly)
-		if ( g_debugEntities.integer > -2 )
+		if ( g_debugEntities.Get() > -2 )
 			Log::Warn("Entity ^5#%i^* is missing classname – we are unable to spawn it.", spawnedEntity->s.number );
 		return false;
 	}
@@ -575,9 +568,12 @@ bool G_CallSpawnFunction( gentity_t *spawnedEntity )
 		spawnedClass->spawn( spawnedEntity );
 		spawnedEntity->spawned = true;
 
-		if ( g_debugEntities.integer > 2 )
-			Log::Warn("Successfully spawned entity ^5#%i^* as ^3#%i^*th instance of ^5%s",
-					spawnedEntity->s.number, spawnedEntity->eclass->instanceCounter, spawnedClass->name);
+		if ( g_debugEntities.Get() > 2 )
+		{
+			std::string count = spawnedEntity->eclass ? std::to_string(spawnedEntity->eclass->instanceCounter) : "??";
+			Log::Notice("Successfully spawned entity ^5#%i^* as ^3#%s^*th instance of ^5%s",
+			            spawnedEntity->s.number, count, spawnedClass->name);
+		}
 
 		/*
 		 *  to allow each spawn function to test and handle for itself,
@@ -591,7 +587,7 @@ bool G_CallSpawnFunction( gentity_t *spawnedEntity )
 	}
 
 	//don't even warn about spawning-errors with -2 (maps might still work at least partly if we ignore these willingly)
-	if ( g_debugEntities.integer > -2 )
+	if ( g_debugEntities.Get() > -2 )
 	{
 		if (!Q_stricmp(S_WORLDSPAWN, spawnedEntity->classname))
 		{
@@ -899,9 +895,9 @@ bool G_WarnAboutDeprecatedEntityField( gentity_t *entity, const char *expectedFi
 	if ( !Q_stricmp(expectedFieldname, actualFieldname) || typeOfDeprecation == ENT_V_CURRENT )
 		return false;
 
-	if ( g_debugEntities.integer >= 0 ) //dont't warn about anything with -1 or lower
+	if ( g_debugEntities.Get() >= 0 ) //dont't warn about anything with -1 or lower
 	{
-		if ( typeOfDeprecation < ENT_V_TMPORARY || g_debugEntities.integer >= 1 )
+		if ( typeOfDeprecation < ENT_V_TMPORARY || g_debugEntities.Get() >= 1 )
 		{
 			Log::Warn("Entity ^5#%i^* contains deprecated field ^5%s^* — use ^5%s^* instead", entity->s.number, actualFieldname, expectedFieldname );
 		}
@@ -1003,6 +999,36 @@ bool G_ParseSpawnVars()
 	return true;
 }
 
+// The callbacks don't work until BG_InitAllConfigs()
+static void InitDisabledItemCvars()
+{
+	static Cvar::Callback<Cvar::Cvar<std::string>> g_disabledEquipment(
+		"g_disabledEquipment",
+		"Forbidden weapons and gear humans can buy, example: " QQ("lcannon, flamer, gren, firebomb, bsuit, larmour"),
+		Cvar::SERVERINFO,
+		"", // everything is allowed by default
+		BG_SetForbiddenEquipment
+		);
+	static Cvar::Callback<Cvar::Cvar<std::string>> g_disabledClasses(
+		"g_disabledClasses",
+		"Forbidden alien classes, like " QQ("level3,level3upg,builder"),
+		Cvar::SERVERINFO,
+		"", // everything is allowed by default
+		BG_SetForbiddenClasses
+		);
+	static Cvar::Callback<Cvar::Cvar<std::string>> g_disabledBuildables(
+		"g_disabledBuildables",
+		"Forbidden (human and alien) buildings, like " QQ("acid_tube, barricade, medistat, drill, mgturret, rocketpod"),
+		Cvar::SERVERINFO,
+		"", // everything is allowed by default
+		BG_SetForbiddenBuildables
+		);
+
+	G_SpawnStringIntoCVar( "disabledEquipment", g_disabledEquipment );
+	G_SpawnStringIntoCVar( "disabledClasses", g_disabledClasses );
+	G_SpawnStringIntoCVar( "disabledBuildables", g_disabledBuildables );
+}
+
 /**
  * Warning: The following comment contains information, that might be parsed and used by radiant based mapeditors.
  */
@@ -1057,18 +1083,20 @@ void SP_worldspawn()
 	if(G_SpawnString( "reverbIntensity", "", &s ))
 		sscanf( s, "%f", &reverbIntensity );
 	if(G_SpawnString( "reverbEffect", "", &s ))
-		trap_SetConfigstring( CS_REVERB_EFFECTS, va( "%i %f %s %f", 0, 0.0f, s, Com_Clamp( 0.0f, 2.0f, reverbIntensity ) ) );
+		trap_SetConfigstring( CS_REVERB_EFFECTS, va( "%i %f %s %f", 0, 0.0f, s, Math::Clamp( reverbIntensity, 0.0f, 2.0f ) ) );
 
-	trap_SetConfigstring( CS_MOTD, g_motd.string );  // message of the day
+	trap_SetConfigstring( CS_MOTD, g_motd.Get().c_str() );  // message of the day
 
-	G_SpawnStringIntoCVarIfSet( "gravity", "g_gravity" );
+	G_SpawnStringIntoCVar( "gravity", g_gravity );
 
-	G_SpawnStringIntoCVarIfSet( "humanBuildPoints", "g_humanBuildPoints" );
-	G_SpawnStringIntoCVarIfSet( "alienBuildPoints", "g_alienBuildPoints" );
+	G_SpawnStringIntoCVar( "humanAllowBuilding", g_humanAllowBuilding );
+	G_SpawnStringIntoCVar( "alienAllowBuilding", g_alienAllowBuilding );
 
-	G_SpawnStringIntoCVar( "disabledEquipment", "g_disabledEquipment" );
-	G_SpawnStringIntoCVar( "disabledClasses", "g_disabledClasses" );
-	G_SpawnStringIntoCVar( "disabledBuildables", "g_disabledBuildables" );
+	G_SpawnStringIntoCVar( "BPInitialBudget", g_buildPointInitialBudget );
+	G_SpawnStringIntoCVar( "BPBudgetPerMiner", g_buildPointBudgetPerMiner );
+	G_SpawnStringIntoCVar( "BPRecoveryRateHalfLife", g_buildPointRecoveryRateHalfLife );
+
+	InitDisabledItemCvars();
 
 	g_entities[ ENTITYNUM_WORLD ].s.number = ENTITYNUM_WORLD;
 	g_entities[ ENTITYNUM_WORLD ].r.ownerNum = ENTITYNUM_NONE;
@@ -1081,14 +1109,14 @@ void SP_worldspawn()
 	// see if we want a warmup time
 	trap_SetConfigstring( CS_WARMUP, "-1" );
 
-	if ( g_doWarmup.integer )
+	if ( g_doWarmup.Get() )
 	{
-		level.warmupTime = level.matchTime + ( g_warmup.integer * 1000 );
+		level.warmupTime = level.matchTime + ( g_warmup.Get() * 1000 );
 		trap_SetConfigstring( CS_WARMUP, va( "%i", level.warmupTime ) );
-		G_LogPrintf( "Warmup: %i\n", g_warmup.integer );
+		G_LogPrintf( "Warmup: %i\n", g_warmup.Get() );
 	}
 
-	level.timelimit = g_timelimit.integer;
+	level.timelimit = g_timelimit.Get();
 }
 
 /*

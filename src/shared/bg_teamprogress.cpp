@@ -75,7 +75,6 @@ static const char *UnlockableHumanName( unlockable_t *unlockable )
 	}
 
 	Sys::Error( "UnlockableHumanName: Unlockable has unknown type" );
-	return nullptr;
 }
 
 #ifdef BUILD_CGAME
@@ -90,7 +89,6 @@ static bool Disabled( unlockable_t *unlockable )
 	}
 
 	Sys::Error( "Disabled: Unlockable has unknown type" );
-	return false;
 }
 #endif // BUILD_CGAME
 
@@ -162,12 +160,12 @@ static void InformUnlockableStatusChanges( int *statusChanges, int count )
 }
 #endif // BUILD_CGAME
 
-static INLINE bool Unlocked( unlockableType_t type, int itemNum )
+static bool Unlocked( unlockableType_t type, int itemNum )
 {
 	return unlockables[ unlockablesTypeOffset[ type ] + itemNum ].unlocked;
 }
 
-static INLINE void CheckStatusKnowledge( unlockableType_t type, int itemNum )
+static void CheckStatusKnowledge( unlockableType_t type, int itemNum )
 {
 	unlockable_t dummy;
 
@@ -193,8 +191,8 @@ static float UnlockToLockThreshold( float unlockThreshold )
 
 	// retrieve relevant settings
 #ifdef BUILD_SGAME
-	momentumHalfLife = g_momentumHalfLife.value;
-	unlockableMinTime  = g_unlockableMinTime.value;
+	momentumHalfLife = g_momentumHalfLife.Get();
+	unlockableMinTime  = g_unlockableMinTime.Get();
 #endif
 #ifdef BUILD_CGAME
 	momentumHalfLife = cgs.momentumHalfLife;
@@ -297,7 +295,7 @@ void BG_ImportUnlockablesFromMask( int team, int mask )
 				break;
 
 			case UNLT_UPGRADE:
-				currentTeam     = TEAM_HUMANS;
+				currentTeam     = BG_Upgrade( itemNum )->team;
 				unlockThreshold = BG_Upgrade( itemNum )->unlockThreshold;
 				break;
 
@@ -307,7 +305,7 @@ void BG_ImportUnlockablesFromMask( int team, int mask )
 				break;
 
 			case UNLT_CLASS:
-				currentTeam     = TEAM_ALIENS;
+				currentTeam     = BG_Class( itemNum )->team;
 				unlockThreshold = BG_Class( itemNum )->unlockThreshold;
 				break;
 
@@ -363,9 +361,6 @@ void BG_ImportUnlockablesFromMask( int team, int mask )
 	{
 		InformUnlockableStatusChanges( statusChanges, statusChangeCount );
 	}
-
-	// export team and mask into cvar for UI
-	trap_Cvar_Set( "ui_unlockables", va( "%d %d", team, mask ) );
 #endif
 
 	// we only know the state for one team
@@ -551,7 +546,7 @@ void G_UpdateUnlockables()
 				break;
 
 			case UNLT_UPGRADE:
-				team            = TEAM_HUMANS;
+				team            = BG_Upgrade( itemNum )->team;
 				unlockThreshold = BG_Upgrade( itemNum )->unlockThreshold;
 				break;
 
@@ -561,7 +556,7 @@ void G_UpdateUnlockables()
 				break;
 
 			case UNLT_CLASS:
-				team            = TEAM_ALIENS;
+				team            = BG_Class( itemNum )->team;
 				unlockThreshold = BG_Class( itemNum )->unlockThreshold;
 				break;
 

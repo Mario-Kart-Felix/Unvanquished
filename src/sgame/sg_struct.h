@@ -25,17 +25,51 @@ along with Unvanquished Source Code.  If not, see <http://www.gnu.org/licenses/>
 #ifndef SG_STRUCT_H_
 #define SG_STRUCT_H_
 
-struct variatingTime_s
+#include "sg_entities.h"
+struct botMemory_t;
+
+struct variatingTime_t
 {
 	float time;
 	float variance;
+};
+
+#define MAX_NAMELOG_NAMES 5
+#define MAX_NAMELOG_ADDRS 5
+
+using unnamed_t = signed int;
+struct namelog_t
+{
+	namelog_t *next;
+
+	char   name[ MAX_NAMELOG_NAMES ][ MAX_NAME_LENGTH ];
+	addr_t ip[ MAX_NAMELOG_ADDRS ];
+	char   guid[ 33 ];
+	int    slot;
+	bool   banned;
+
+	int nameOffset;
+	int nameChangeTime;
+	int nameChanges;
+	int voteCount;
+
+	unnamed_t unnamedNumber;
+
+	bool muted;
+	bool denyBuild;
+
+	int    score;
+	int    credits;
+	team_t team;
+
+	int id;
 };
 
 /**
  * in the context of a target, this describes the conditions to create or to act within
  * while as part of trigger or most other types, it will be used as filtering condition that needs to be fulfilled to trigger, or to act directly
  */
-struct gentityConditions_s
+struct gentityConditions_t
 {
 	team_t   team;
 	int      stage;
@@ -51,7 +85,7 @@ struct gentityConditions_s
 /**
  * struct containing the configuration data of a gentity opposed to its state data
  */
-struct gentityConfig_s
+struct gentityConfig_t
 {
 	/* amount of a context depended size for this entity */
 	int amount;
@@ -78,7 +112,7 @@ struct gentityConfig_s
 	int triggerRange;
 };
 
-struct entityClass_s
+struct entityClass_t
 {
 	int instanceCounter;
 	/**
@@ -90,7 +124,44 @@ struct entityClass_s
 
 class Entity;
 
-struct gentity_s
+// Replacement for gentity_t* that can detect the case where an entity has been recycled.
+// operator bool checks that the entity is non-null and has not been freed since the reference
+// was formed.
+template<typename T>
+struct GentityRef_impl
+{
+	T entity;
+	unsigned generation;
+
+	GentityRef_impl<T>& operator=(T ent) {
+		entity = ent;
+		if (ent) {
+			generation = ent->generation;
+		}
+		return *this;
+	}
+
+	operator bool() const {
+		return entity != nullptr && entity->generation == generation;
+	}
+
+	T get() const {
+		if (!*this) {
+			return nullptr;
+		}
+		return entity;
+	}
+
+	T operator->() const {
+		ASSERT(*this);
+		return entity;
+	}
+};
+
+using GentityRef = GentityRef_impl<gentity_t *>;
+using GentityConstRef = GentityRef_impl<const gentity_t *>;
+
+struct gentity_t
 {
 	entityState_t  s; // communicated by server to clients
 	entityShared_t r; // shared by both the server system and game
@@ -102,13 +173,13 @@ struct gentity_s
 	// New style entity
 	Entity* entity;
 
-	struct gclient_s *client; // nullptr if not a client
+	gclient_t *client; // nullptr if not a client
 
-	bool     inuse;
+	unsigned generation; // used with GentityRef
 	int          freetime; // level.time when the object was freed
 	int          eventTime; // events will be cleared EVENT_VALID_MSEC after set
+	bool     inuse;
 	bool     freeAfterEvent;
-	bool     unlinkAfterEvent;
 
 	int          flags; // FL_* variables
 
@@ -182,7 +253,8 @@ struct gentity_s
 	 */
 	int          targetCount;
 	char         *targets[ MAX_ENTITY_TARGETS + 1 ];
-	gentity_t    *target;  /*< the currently selected target to aim at/for, is the reverse to "tracker" */
+
+	GentityRef   target; // target of trapper, medistation, hive, rocketpod, builder's +deconstruct
 
 	/* path chaining, not unlike the target/tracker relationship */
 	gentity_t    *nextPathSegment;
@@ -306,7 +378,7 @@ struct gentity_s
 
 
 	team_t      buildableTeam; // buildable item team
-	struct namelog_s *builtBy; // clientNum of person that built this
+	namelog_t   *builtBy; // clientNum of person that built this
 
 	int         pain_debounce_time;
 	int         last_move_time;
@@ -363,7 +435,7 @@ struct gentity_s
  * time and reading them back at connection time.  Anything added here
  * MUST be dealt with in G_InitSessionData() / G_ReadSessionData() / G_WriteSessionData()
  */
-struct clientSession_s
+struct clientSession_t
 {
 	int              spectatorTime; // for determining next-in-line to play
 	spectatorState_t spectatorState;
@@ -375,41 +447,11 @@ struct clientSession_s
 	int              seenWelcome; // determines if the client has seen server's welcome message
 };
 
-#define MAX_NAMELOG_NAMES 5
-#define MAX_NAMELOG_ADDRS 5
-
-struct namelog_s
-{
-	struct namelog_s *next;
-
-	char             name[ MAX_NAMELOG_NAMES ][ MAX_NAME_LENGTH ];
-	addr_t           ip[ MAX_NAMELOG_ADDRS ];
-	char             guid[ 33 ];
-	int              slot;
-	bool         banned;
-
-	int              nameOffset;
-	int              nameChangeTime;
-	int              nameChanges;
-	int              voteCount;
-
-	unnamed_t        unnamedNumber;
-
-	bool         muted;
-	bool         denyBuild;
-
-	int              score;
-	int              credits;
-	team_t           team;
-
-	int              id;
-};
-
 /**
  * client data that stays across multiple respawns, but is cleared
  * on each level change or team change at ClientBegin()
  */
-struct clientPersistant_s
+struct clientPersistant_t
 {
 	clientConnected_t connected;
 	usercmd_t         cmd; // we would lose angles if not persistent
@@ -426,6 +468,7 @@ struct clientPersistant_s
 
 	class_t           classSelection; // player class (copied to ent->client->ps.stats[ STAT_CLASS ] once spawned)
 	float             evolveHealthFraction;
+	int               devolveReturningCredits;
 	weapon_t          humanItemSelection; // humans have a starting item
 
 	int               teamChangeTime; // level.time of last team change
@@ -463,7 +506,7 @@ struct clientPersistant_s
 	bool isFillerBot;
 };
 
-struct unlagged_s
+struct unlagged_t
 {
 	vec3_t   origin;
 	vec3_t   mins;
@@ -478,7 +521,7 @@ struct unlagged_s
  * this structure is cleared on each ClientSpawn(),
  * except for 'client->pers' and 'client->sess'
  */
-struct gclient_s
+struct gclient_t
 {
 	// ps MUST be the first element, because the server expects it
 	playerState_t ps; // communicated by server to clients
@@ -553,7 +596,7 @@ struct gclient_s
 /**
  * store locational damage regions
  */
-struct damageRegion_s
+struct damageRegion_t
 {
 	char     name[ 32 ];
 	float    area, modifier, minHeight, maxHeight;
@@ -562,7 +605,7 @@ struct damageRegion_s
 	bool nonlocational;
 };
 
-struct spawnQueue_s
+struct spawnQueue_t
 {
 	int clients[ MAX_CLIENTS ];
 
@@ -572,7 +615,7 @@ struct spawnQueue_s
 /**
  * data needed to revert a change in layout
  */
-struct buildLog_s
+struct buildLog_t
 {
 	int         time;
 	buildFate_t fate;
@@ -592,11 +635,11 @@ struct buildLog_s
 #define MAX_SPAWN_VARS_CHARS 4096
 #define MAX_BUILDLOG         1024
 
-struct level_locals_s
+struct level_locals_t
 {
-	struct gclient_s *clients; // [maxclients]
+	gclient_t *clients; // [maxclients]
 
-	struct gentity_s *gentities;
+	gentity_t *gentities;
 
 	int              num_entities; // MAX_CLIENTS <= num_entities <= ENTITYNUM_MAX_NORMAL
 
@@ -685,9 +728,6 @@ struct level_locals_s
 
 	voice_t          *voices;
 
-	emoticon_t       emoticons[ MAX_EMOTICONS ];
-	int              emoticonCount;
-
 	namelog_t        *namelogs;
 
 	buildLog_t       buildLog[ MAX_BUILDLOG ];
@@ -712,7 +752,7 @@ struct level_locals_s
 		// gameplay state
 		int              numSpawns;
 		int              numClients;
-		int              numPlayers;
+		int              numPlayers; // non-bot clients
 		int              numBots;
 		float            averageNumClients;
 		float            averageNumPlayers;
@@ -733,21 +773,21 @@ struct level_locals_s
 
 	struct {
 		int synchronous;
-		int fixed;
+		bool fixed;
 		int msec;
-		int accurate;
+		bool accurate;
 		bool initialized;
 	} pmoveParams;
 };
 
-struct commands_s
+struct commands_t
 {
 	const char *cmdName;
 	int        cmdFlags;
 	void      ( *cmdHandler )( gentity_t *ent );
 };
 
-struct zap_s
+struct zap_t
 {
 	bool  used;
 

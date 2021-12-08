@@ -551,7 +551,7 @@ void SetMoverState( gentity_t *ent, moverState_t moverState, int time )
 				vec3_t mins, maxs;
 				VectorAdd( ent->restingPosition, ent->r.mins, mins );
 				VectorAdd( ent->restingPosition, ent->r.maxs, maxs );
-				trap_BotAddObstacle( mins, maxs, &ent->obstacleHandle );
+				G_BotAddObstacle( mins, maxs, &ent->obstacleHandle );
 			}
 			break;
 
@@ -563,7 +563,7 @@ void SetMoverState( gentity_t *ent, moverState_t moverState, int time )
 			{
 				if ( ent->obstacleHandle )
 				{
-					trap_BotRemoveObstacle( ent->obstacleHandle );
+					G_BotRemoveObstacle( ent->obstacleHandle );
 					ent->obstacleHandle = 0;
 				}
 			}
@@ -2425,7 +2425,7 @@ void SP_func_static( gentity_t *self )
 		G_SpawnFloat( "reverbDistance", "250", &reverbDistance );
 		G_SpawnFloat( "reverbIntensity", "1", &reverbIntensity );
 
-		reverbIntensity = Com_Clamp( 0.0f, 2.0f, reverbIntensity );
+		reverbIntensity = Math::Clamp( reverbIntensity, 0.0f, 2.0f );
 		G_ReverbEffectIndex( va( "%s %f %s %f", self->model + 1,
 					   reverbDistance, reverbEffect, reverbIntensity ) );
 	}
@@ -2449,34 +2449,44 @@ void SP_func_dynamic( gentity_t *self )
 
 ROTATING
 
+QUAKED func_rotating (0 .5 .8) ? START_ON - X_AXIS Y_AXIS
+You need to have an origin brush as part of this entity.  The center of that brush will be
+the point around which it is rotated. It will rotate around the Z axis by default.  You can
+check either the X_AXIS or Y_AXIS box to change that.
+"model2"  .md3 model to also draw
+"speed"   determines how fast it moves; default value is 100.
+"dmg"   damage to inflict when blocked (2 default)
+"color"   constantLight color
+"light"   constantLight radius
+
 ===============================================================================
 */
 
 void SP_func_rotating( gentity_t *self )
 {
-	G_ResetFloatField(&self->speed, false, self->config.speed, self->eclass->config.speed, 400);
+	G_ResetFloatField(&self->speed, false, self->config.speed, self->eclass->config.speed, 100);
 
 	// set the axis of rotation
 	self->s.apos.trType = trType_t::TR_LINEAR;
 
 	if ( self->spawnflags & 4 )
 	{
-		self->s.apos.trDelta[ 2 ] = self->config.speed;
+		self->s.apos.trDelta[ 2 ] = self->speed;
 	}
 	else if ( self->spawnflags & 8 )
 	{
-		self->s.apos.trDelta[ 0 ] = self->config.speed;
+		self->s.apos.trDelta[ 0 ] = self->speed;
 	}
 	else
 	{
-		self->s.apos.trDelta[ 1 ] = self->config.speed;
+		self->s.apos.trDelta[ 1 ] = self->speed;
 	}
 
 	G_ResetIntField(&self->damage, true, self->config.damage, self->eclass->config.damage, 2);
 
 	trap_SetBrushModel( self, self->model );
 	InitMover( self );
-	reset_moverspeed( self, 400 );
+	reset_moverspeed( self, 100 );
 
 	VectorCopy( self->s.origin, self->s.pos.trBase );
 	VectorCopy( self->s.pos.trBase, self->r.currentOrigin );
@@ -2510,11 +2520,12 @@ void SP_func_bobbing( gentity_t *self )
 
 	trap_SetBrushModel( self, self->model );
 	InitMover( self );
+	reset_moverspeed( self, 4 );
 
 	VectorCopy( self->s.origin, self->s.pos.trBase );
 	VectorCopy( self->s.origin, self->r.currentOrigin );
 
-	self->s.pos.trDuration = self->config.speed * 1000;
+	self->s.pos.trDuration = self->speed * 1000;
 	self->s.pos.trTime = self->s.pos.trDuration * phase;
 	self->s.pos.trType = trType_t::TR_SINE;
 
@@ -2543,10 +2554,7 @@ PENDULUM
 
 void SP_func_pendulum( gentity_t *self )
 {
-	float frequency;
-	float length;
 	float phase;
-
 	G_SpawnFloat( "phase", "0", &phase );
 
 	G_ResetIntField(&self->damage, true, self->config.damage, self->eclass->config.damage, 2);
@@ -2554,11 +2562,11 @@ void SP_func_pendulum( gentity_t *self )
 	trap_SetBrushModel( self, self->model );
 
 	// find pendulum length
-	length = fabs( self->r.mins[ 2 ] );
+	float length = fabs( self->r.mins[ 2 ] );
 
-	if ( length < 8 )
+	if ( length < 8.0f )
 	{
-		length = 8;
+		length = 8.0f;
 	}
 
 	InitMover( self );
@@ -2569,7 +2577,7 @@ void SP_func_pendulum( gentity_t *self )
 
 	VectorCopy( self->s.angles, self->s.apos.trBase );
 
-	frequency = 1 / ( M_PI * 2 ) * sqrt( g_gravity.value / ( 3 * length ) );
+	float frequency = 1.0f / ( M_PI * 2.0f ) * sqrtf( g_gravity.Get() / ( 3.0f * length ) );
 	self->s.apos.trDuration = 1000 / frequency;
 	self->s.apos.trTime = self->s.apos.trDuration * phase;
 	self->s.apos.trType = trType_t::TR_SINE;
@@ -2589,7 +2597,7 @@ void func_spawn_act( gentity_t *self, gentity_t*, gentity_t *activator )
 	{
 		if ( self->obstacleHandle )
 		{
-			trap_BotRemoveObstacle( self->obstacleHandle );
+			G_BotRemoveObstacle( self->obstacleHandle );
 			self->obstacleHandle = 0;
 		}
 		trap_UnlinkEntity( self );
@@ -2598,7 +2606,7 @@ void func_spawn_act( gentity_t *self, gentity_t*, gentity_t *activator )
 	{
 		VectorAdd( self->restingPosition, self->r.mins, mins );
 		VectorAdd( self->restingPosition, self->r.maxs, maxs );
-		trap_BotAddObstacle( mins, maxs, &self->obstacleHandle );
+		G_BotAddObstacle( mins, maxs, &self->obstacleHandle );
 		trap_LinkEntity( self );
 		if( !( self->spawnflags & 2 ) )
 			G_KillBrushModel( self, activator );
@@ -2613,14 +2621,14 @@ void func_spawn_reset( gentity_t *self )
 	{
 		VectorAdd( self->restingPosition, self->r.mins, mins );
 		VectorAdd( self->restingPosition, self->r.maxs, maxs );
-		trap_BotAddObstacle( mins, maxs, &self->obstacleHandle );
+		G_BotAddObstacle( mins, maxs, &self->obstacleHandle );
 		trap_LinkEntity( self );
 	}
 	else
 	{
 		if ( self->obstacleHandle )
 		{
-			trap_BotRemoveObstacle( self->obstacleHandle );
+			G_BotRemoveObstacle( self->obstacleHandle );
 			self->obstacleHandle = 0;
 		}
 		trap_UnlinkEntity( self );

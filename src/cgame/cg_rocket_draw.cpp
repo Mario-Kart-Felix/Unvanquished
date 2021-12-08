@@ -379,7 +379,7 @@ public:
 		int        fps;
 		int        t, frameTime;
 
-		if ( !cg_drawFPS.integer && shouldShowFps )
+		if ( !cg_drawFPS.Get() && shouldShowFps )
 		{
 			shouldShowFps = false;
 			SetText( "" );
@@ -456,7 +456,7 @@ public:
 		weaponInfo_t *wi;
 		bool     onRelevantEntity;
 
-		if ( ( !cg_drawCrosshairHit.integer && !cg_drawCrosshairFriendFoe.integer ) ||
+		if ( ( !cg_drawCrosshairHit.Get() && !cg_drawCrosshairFriendFoe.Get() ) ||
 			cg.snap->ps.persistant[ PERS_SPECSTATE ] != SPECTATOR_NOT ||
 			cg.snap->ps.pm_type == PM_INTERMISSION ||
 			cg.renderingThirdPerson )
@@ -476,8 +476,8 @@ public:
 		GetElementRect( rect );
 
 		// set base color (friend/foe detection)
-		if ( cg_drawCrosshairFriendFoe.integer >= CROSSHAIR_ALWAYSON ||
-			( cg_drawCrosshairFriendFoe.integer >= CROSSHAIR_RANGEDONLY && BG_Weapon( weapon )->longRanged ) )
+		if ( cg_drawCrosshairFriendFoe.Get() >= CROSSHAIR_ALWAYSON ||
+			( cg_drawCrosshairFriendFoe.Get() >= CROSSHAIR_RANGEDONLY && BG_Weapon( weapon )->longRanged ) )
 		{
 			if ( cg.crosshairFoe )
 			{
@@ -507,7 +507,7 @@ public:
 		}
 
 		// add hit color
-		if ( cg_drawCrosshairHit.integer && cg.hitTime + CROSSHAIR_INDICATOR_HITFADE > cg.time )
+		if ( cg_drawCrosshairHit.Get() && cg.hitTime + CROSSHAIR_INDICATOR_HITFADE > cg.time )
 		{
 			dim = ( ( cg.hitTime + CROSSHAIR_INDICATOR_HITFADE ) - cg.time ) / ( float )CROSSHAIR_INDICATOR_HITFADE;
 			drawColor = Color::Blend( baseColor, Color::White, dim );
@@ -524,7 +524,7 @@ public:
 		}
 
 		// set size
-		w = h = wi->crossHairSize * cg_crosshairSize.value;
+		w = h = wi->crossHairSize * cg_crosshairSize.Get();
 		w *= cgs.aspectScale;
 
 		x = rect.x + ( rect.w / 2 ) - ( w / 2 );
@@ -568,12 +568,12 @@ public:
 
 		weapon = BG_GetPlayerWeapon( &cg.snap->ps );
 
-		if ( cg_drawCrosshair.integer == CROSSHAIR_ALWAYSOFF )
+		if ( cg_drawCrosshair.Get() == CROSSHAIR_ALWAYSOFF )
 		{
 			return;
 		}
 
-		if ( cg_drawCrosshair.integer == CROSSHAIR_RANGEDONLY &&
+		if ( cg_drawCrosshair.Get() == CROSSHAIR_RANGEDONLY &&
 			!BG_Weapon( weapon )->longRanged )
 		{
 			return;
@@ -598,7 +598,7 @@ public:
 
 		wi = &cg_weapons[ weapon ];
 
-		w = h = wi->crossHairSize * cg_crosshairSize.value;
+		w = h = wi->crossHairSize * cg_crosshairSize.Get();
 		w *= cgs.aspectScale;
 
 		// HACK: This ignores the width/height of the rect (does it?)
@@ -648,14 +648,14 @@ void CG_AddSpeed()
 
 	VectorCopy( cg.snap->ps.velocity, vel );
 
-	if ( cg_drawSpeed.integer & SPEEDOMETER_IGNORE_Z )
+	if ( cg_drawSpeed.Get() & SPEEDOMETER_IGNORE_Z )
 	{
 		vel[ 2 ] = 0;
 	}
 
 	speed = VectorLength( vel );
 
-	windowTime = cg_maxSpeedTimeWindow.integer;
+	windowTime = cg_maxSpeedTimeWindow.Get();
 
 	if ( windowTime < 0 )
 	{
@@ -774,7 +774,7 @@ public:
 		const Color::Color fast = { 1.0, 0.0, 0.0 };
 		rectDef_t    rect;
 
-		if ( !cg_drawSpeed.integer )
+		if ( !cg_drawSpeed.Get() )
 		{
 			if ( shouldDrawSpeed )
 			{
@@ -790,7 +790,7 @@ public:
 		}
 
 
-		if ( cg_drawSpeed.integer & SPEEDOMETER_DRAW_GRAPH )
+		if ( cg_drawSpeed.Get() & SPEEDOMETER_DRAW_GRAPH )
 		{
 			// grab info from libRocket
 			GetElementRect( rect );
@@ -835,7 +835,7 @@ public:
 			trap_R_ClearColor();
 		}
 
-		if ( cg_drawSpeed.integer & SPEEDOMETER_DRAW_TEXT )
+		if ( cg_drawSpeed.Get() & SPEEDOMETER_DRAW_TEXT )
 		{
 			// Add text to be configured via CSS
 			if ( cg.predictedPlayerState.clientNum == cg.clientNum )
@@ -843,7 +843,7 @@ public:
 				vec3_t vel;
 				VectorCopy( cg.predictedPlayerState.velocity, vel );
 
-				if ( cg_drawSpeed.integer & SPEEDOMETER_IGNORE_Z )
+				if ( cg_drawSpeed.Get() & SPEEDOMETER_IGNORE_Z )
 				{
 					vel[ 2 ] = 0;
 				}
@@ -910,7 +910,8 @@ public:
 		if ( evos != value )
 		{
 			evos = value;
-			SetText( va( "%1.1f", evos ) );
+			// display it rounded down
+			SetText( va( "%1.1f", floorf(evos*10)/10 ) );
 		}
 	}
 
@@ -1058,7 +1059,7 @@ public:
 		es = &cg_entities[ trace.entityNum ].currentState;
 
 		if ( es->eType == entityType_t::ET_BUILDABLE && BG_Buildable( es->modelindex )->usable &&
-			cg.predictedPlayerState.persistant[ PERS_TEAM ] == BG_Buildable( es->modelindex )->team )
+			CG_IsOnMyTeam(*es) )
 		{
 			//hack to prevent showing the usable buildable when you aren't carrying an energy weapon
 			if ( es->modelindex == BA_H_REACTOR &&
@@ -1149,12 +1150,12 @@ public:
 		int   mins, seconds, tens;
 		int   msec;
 
-		if ( !cg_drawTimer.integer && IsVisible() )
+		if ( !cg_drawTimer.Get() && IsVisible() )
 		{
 			SetProperty( "display", "none" );
 			return;
 		}
-		else if ( cg_drawTimer.integer && !IsVisible() )
+		else if ( cg_drawTimer.Get() && !IsVisible() )
 		{
 			SetProperty( "display", "block" );
 		}
@@ -1290,8 +1291,7 @@ static void CG_Rocket_DrawDisconnect()
 	x = 640 - 48;
 	y = 480 - 48;
 
-	CG_DrawPic( x, y, 48, 48, trap_R_RegisterShader( "gfx/feedback/net",
-				RSF_DEFAULT ) );
+	CG_DrawPic( x, y, 48, 48, trap_R_RegisterShader( "gfx/feedback/net", (RegisterShaderFlags_t) ( RSF_NOMIP ) ) );
 }
 
 #define MAX_LAGOMETER_PING  900
@@ -1486,7 +1486,7 @@ public:
 			shouldDrawPing = true;
 		}
 
-		if ( cg_nopredict.integer || cg.pmoveParams.synchronous )
+		if ( cg_nopredict.Get() || cg.pmoveParams.synchronous )
 		{
 			ping = "snc";
 		}
@@ -1516,8 +1516,6 @@ static void CG_ScanForCrosshairEntity()
 {
 	trace_t       trace;
 	vec3_t        start, end;
-	team_t        ownTeam, targetTeam;
-	entityState_t *targetState;
 
 	if ( cg.snap == nullptr )
 	{
@@ -1545,18 +1543,19 @@ static void CG_ScanForCrosshairEntity()
 		return;
 	}
 
-	ownTeam = ( team_t ) cg.snap->ps.persistant[ PERS_TEAM ];
-	targetState = &cg_entities[ trace.entityNum ].currentState;
+	entityState_t &targetState = cg_entities[ trace.entityNum ].currentState;
+
+	team_t ownTeam    = CG_MyTeam();
+	team_t targetTeam = CG_Team(targetState);
 
 	if ( trace.entityNum >= MAX_CLIENTS )
 	{
 		// we have a non-client entity
 
 		// set friend/foe if it's a living buildable
-		if ( targetState->eType == entityType_t::ET_BUILDABLE && targetState->generic1 > 0 )
+		if ( targetState.eType == entityType_t::ET_BUILDABLE
+				&& CG_IsAlive(targetState) )
 		{
-			targetTeam = BG_Buildable( targetState->modelindex )->team;
-
 			if ( targetTeam == ownTeam && ownTeam != TEAM_NONE )
 			{
 				cg.crosshairFriend = true;
@@ -1569,41 +1568,37 @@ static void CG_ScanForCrosshairEntity()
 		}
 
 		// set more stuff if requested
-		if ( cg_drawEntityInfo.integer && targetState->eType != entityType_t::ET_GENERAL )
+		if ( cg_drawEntityInfo.Get() && targetState.eType != entityType_t::ET_GENERAL )
 		{
-			cg.crosshairClientNum = trace.entityNum;
-			cg.crosshairClientTime = cg.time;
+			cg.crosshairEntityNum = trace.entityNum;
+			cg.crosshairEntityTime = cg.time;
 		}
 	}
-
 	else
 	{
-		// we have a client entity
-		targetTeam = cgs.clientinfo[ trace.entityNum ].team;
-
 		// only react to living clients
-		if ( targetState->generic1 > 0 )
+		if ( !CG_IsAlive(targetState) )
+			return;
+
+		// set friend/foe
+		if ( targetTeam == ownTeam && ownTeam != TEAM_NONE )
 		{
-			// set friend/foe
-			if ( targetTeam == ownTeam && ownTeam != TEAM_NONE )
+			cg.crosshairFriend = true;
+
+			// only set this for friendly clients as it triggers name display
+			cg.crosshairEntityNum = trace.entityNum;
+			cg.crosshairEntityTime = cg.time;
+		}
+
+		else if ( targetTeam != TEAM_NONE )
+		{
+			cg.crosshairFoe = true;
+
+			if ( ownTeam == TEAM_NONE )
 			{
-				cg.crosshairFriend = true;
-
-				// only set this for friendly clients as it triggers name display
-				cg.crosshairClientNum = trace.entityNum;
-				cg.crosshairClientTime = cg.time;
-			}
-
-			else if ( targetTeam != TEAM_NONE )
-			{
-				cg.crosshairFoe = true;
-
-				if ( ownTeam == TEAM_NONE )
-				{
-					// spectating, so show the name
-					cg.crosshairClientNum = trace.entityNum;
-					cg.crosshairClientTime = cg.time;
-				}
+				// spectating, so show the name
+				cg.crosshairEntityNum = trace.entityNum;
+				cg.crosshairEntityTime = cg.time;
 			}
 		}
 	}
@@ -1620,7 +1615,7 @@ public:
 		Rocket::Core::String name;
 		float alpha;
 
-		if ( !cg_drawCrosshairNames.integer || cg.renderingThirdPerson )
+		if ( ( !cg_drawCrosshairNames.Get() && !cg_drawEntityInfo.Get() ) || cg.renderingThirdPerson )
 		{
 			Clear();
 			return;
@@ -1630,9 +1625,9 @@ public:
 		CG_ScanForCrosshairEntity();
 
 		// draw the name of the player being looked at
-		alpha = CG_FadeAlpha( cg.crosshairClientTime, CROSSHAIR_CLIENT_TIMEOUT );
+		alpha = CG_FadeAlpha( cg.crosshairEntityTime, CROSSHAIR_CLIENT_TIMEOUT );
 
-		if ( cg.crosshairClientTime == cg.time )
+		if ( cg.crosshairEntityTime == cg.time )
 		{
 			alpha = 1.0f;
 		}
@@ -1649,31 +1644,35 @@ public:
 			SetProperty( "opacity", va( "%f", alpha ) );
 		}
 
-		if ( cg_drawEntityInfo.integer )
+		if ( cg_drawEntityInfo.Get() )
 		{
 			name = va( "(^5%s^7|^5#%d^7)",
-					   Com_EntityTypeName( cg_entities[cg.crosshairClientNum].currentState.eType ), cg.crosshairClientNum );
+					   Com_EntityTypeName( cg_entities[cg.crosshairEntityNum].currentState.eType ), cg.crosshairEntityNum );
 		}
 
-		else if ( cg_drawCrosshairNames.integer >= 2 )
+		else if ( cg.crosshairEntityNum < MAX_CLIENTS )
 		{
-			name = va( "%2i: %s", cg.crosshairClientNum, cgs.clientinfo[ cg.crosshairClientNum ].name );
-		}
+			if ( cg_drawCrosshairNames.Get() >= 2 )
+			{
+				name = va( "%2i: %s", cg.crosshairEntityNum, cgs.clientinfo[ cg.crosshairEntityNum ].name );
+			}
 
-		else
-		{
-			name = cgs.clientinfo[ cg.crosshairClientNum ].name;
+			else
+			{
+				name = cgs.clientinfo[ cg.crosshairEntityNum ].name;
+			}
 		}
 
 		// add health from overlay info to the crosshair client name
-		if ( cg_teamOverlayUserinfo.integer &&
-			cg.snap->ps.persistant[ PERS_TEAM ] != TEAM_NONE &&
+		if ( cg_teamOverlayUserinfo.Get() &&
+			CG_MyTeam() != TEAM_NONE &&
 			cgs.teamInfoReceived &&
-			cgs.clientinfo[ cg.crosshairClientNum ].health > 0 )
+			cg.crosshairEntityNum < MAX_CLIENTS &&
+			cgs.clientinfo[ cg.crosshairEntityNum ].health > 0)
 		{
 			name = va( "%s ^7[^%c%d^7]", name.CString(),
-					   CG_GetColorCharForHealth( cg.crosshairClientNum ),
-					   cgs.clientinfo[ cg.crosshairClientNum ].health );
+					   CG_GetColorCharForHealth( cg.crosshairEntityNum ),
+					   cgs.clientinfo[ cg.crosshairEntityNum ].health);
 		}
 
 		if ( name != name_ )
@@ -1695,53 +1694,6 @@ private:
 
 	Rocket::Core::String name_;
 	float alpha_;
-};
-
-class MomentumElement : public TextHudElement
-{
-public:
-	MomentumElement( const Rocket::Core::String& tag ) :
-			TextHudElement( tag, ELEMENT_BOTH ),
-			momentum_(-1.0f) {}
-
-	void DoOnUpdate()
-	{
-		float momentum;
-		team_t team;
-
-		if ( cg.intermissionStarted )
-		{
-			Clear();
-			return;
-		}
-
-		team = ( team_t ) cg.snap->ps.persistant[ PERS_TEAM ];
-
-		if ( team <= TEAM_NONE || team >= NUM_TEAMS )
-		{
-			Clear();
-			return;
-		}
-
-		momentum = cg.predictedPlayerState.persistant[ PERS_MOMENTUM ] / 10.0f;
-		if ( momentum != momentum_ )
-		{
-			momentum_ = momentum;
-			SetText( va( "%.1f", momentum_) );
-		}
-	}
-
-private:
-	void Clear()
-	{
-		if (momentum_ != -1.0f)
-		{
-			momentum_ = -1.0f;
-			SetText( "" );
-		}
-	}
-
-	float momentum_;
 };
 
 class LevelshotElement : public HudElement
@@ -2287,13 +2239,13 @@ public:
 
 				// avoid sudden jumps in opacity
 				t0 = cg.time;
-				if ( cosOld >= 0.0 )
+				if ( cosOld >= 0.0f )
 				{
-					offset = asin( sinOld );
+					offset = asinf( sinOld );
 				}
 				else
 				{
-					offset = M_PI - asin( sinOld );
+					offset = M_PI - asinf( sinOld );
 				}
 				regenerationInterval = interval;
 			}
@@ -2323,12 +2275,12 @@ private:
 
 	float GetSin()
 	{
-		return sin( GetParam() );
+		return sinf( GetParam() );
 	}
 
 	float GetCos()
 	{
-		return cos( GetParam() );
+		return cosf( GetParam() );
 	}
 
 	float GetParam()
@@ -2354,7 +2306,7 @@ void CG_Rocket_DrawPlayerHealth()
 
 	if ( lastHealth != cg.snap->ps.stats[ STAT_HEALTH ] )
 	{
-		Rocket_SetInnerRML( va( "%d", cg.snap->ps.stats[ STAT_HEALTH ] ), 0 );
+		Rocket_SetInnerRMLRaw( va( "%d", cg.snap->ps.stats[ STAT_HEALTH ] ) );
 	}
 }
 
@@ -2375,19 +2327,30 @@ void CG_Rocket_DrawPlayerHealthCross()
 
 	if ( cg.snap->ps.stats[ STAT_STATE ] & SS_HEALING_8X )
 	{
-		shader = cgs.media.healthCross3X;
+		shader = cgs.media.healthCross4X;
 	}
 
 	else if ( cg.snap->ps.stats[ STAT_STATE ] & SS_HEALING_4X )
 	{
 		if ( cg.snap->ps.persistant[ PERS_TEAM ] == TEAM_ALIENS )
 		{
-			shader = cgs.media.healthCross2X;
+			shader = cgs.media.healthCross3X;
 		}
-
 		else
 		{
 			shader = cgs.media.healthCrossMedkit;
+		}
+	}
+
+	else if ( cg.snap->ps.stats[ STAT_STATE ] & SS_HEALING_2X )
+	{
+		if ( CG_MyTeam() == TEAM_ALIENS )
+		{
+			shader = cgs.media.healthCross2X;
+		}
+		else
+		{
+			shader = cgs.media.healthCross3X;
 		}
 	}
 
@@ -2399,7 +2362,7 @@ void CG_Rocket_DrawPlayerHealthCross()
 	// Pick the alpha value
 	color = ref_color;
 
-	if ( cg.snap->ps.persistant[ PERS_TEAM ] == TEAM_HUMANS &&
+	if ( CG_MyTeam() == TEAM_HUMANS &&
 			cg.snap->ps.stats[ STAT_HEALTH ] < 10 )
 	{
 		color = Color::Red;
@@ -2825,7 +2788,7 @@ void CG_Rocket_DrawFollow()
 	}
 	else
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 	}
 }
 
@@ -2876,7 +2839,7 @@ void CG_Rocket_DrawConnectText()
 
 	Q_strcat( rml, sizeof( rml ), s );
 
-	Rocket_SetInnerRML( rml, 0 );
+	Rocket_SetInnerRMLRaw( rml );
 }
 
 void CG_Rocket_DrawClock()
@@ -2884,15 +2847,15 @@ void CG_Rocket_DrawClock()
 	char    *s;
 	qtime_t qt;
 
-	if ( !cg_drawClock.integer )
+	if ( !cg_drawClock.Get() )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
 	Com_RealTime( &qt );
 
-	if ( cg_drawClock.integer == 2 )
+	if ( cg_drawClock.Get() == 2 )
 	{
 		s = va( "%02d%s%02d", qt.tm_hour, ( qt.tm_sec % 2 ) ? ":" : " ",
 				qt.tm_min );
@@ -2922,14 +2885,14 @@ void CG_Rocket_DrawClock()
 		s = va( "%d%s%02d%s", h, ( qt.tm_sec % 2 ) ? ":" : " ", qt.tm_min, pm );
 	}
 
-	Rocket_SetInnerRML( s, 0 );
+	Rocket_SetInnerRMLRaw( s );
 }
 
 void CG_Rocket_DrawTutorial()
 {
-	if ( !cg_tutorial.integer )
+	if ( !cg_tutorial.Get() )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -2960,7 +2923,7 @@ void CG_Rocket_DrawChatType()
 	{
 		const char *prompt = _( sayText[ cg.sayType ].prompt );
 
-		if ( ui_chatPromptColors.integer )
+		if ( ui_chatPromptColors.Get() )
 		{
 			Rocket_SetInnerRML( va( "%s%s", sayText[ cg.sayType ].colour, prompt ), RP_QUAKE );
 		}
@@ -2979,10 +2942,8 @@ static void CG_Rocket_DrawPlayerMomentumBar()
 	// data
 	rectDef_t     rect;
 	Color::Color  foreColor, backColor, lockedColor, unlockedColor;
-	playerState_t *ps;
-	float         momentum, rawFraction, fraction, glowFraction, glowOffset, borderSize;
+	float         rawFraction, fraction, glowFraction, glowOffset, borderSize;
 	int           threshold;
-	team_t        team;
 	bool      unlocked;
 
 	momentumThresholdIterator_t unlockableIter = { -1, 0 };
@@ -3000,10 +2961,8 @@ static void CG_Rocket_DrawPlayerMomentumBar()
 	Rocket_GetProperty( "unlocked-marker-color", &unlockedColor, sizeof(Color::Color), rocketVarType_t::ROCKET_COLOR );
 
 
-	ps = &cg.predictedPlayerState;
-
-	team = ( team_t ) ps->persistant[ PERS_TEAM ];
-	momentum = ps->persistant[ PERS_MOMENTUM ] / 10.0f;
+	team_t team = CG_MyTeam();
+	float momentum = cg.predictedPlayerState.persistant[ PERS_MOMENTUM ] / 10.0f;
 
 	x = rect.x;
 	y = rect.y;
@@ -3028,17 +2987,7 @@ static void CG_Rocket_DrawPlayerMomentumBar()
 	CG_FillRect( x, y, w, h, color );
 
 	// draw momentum bar
-	fraction = rawFraction = momentum / MOMENTUM_MAX;
-
-	if ( fraction < 0.0f )
-	{
-		fraction = 0.0f;
-	}
-
-	else if ( fraction > 1.0f )
-	{
-		fraction = 1.0f;
-	}
+	fraction = Math::Clamp( rawFraction = momentum / MOMENTUM_MAX, 0.0f, 1.0f );
 
 	if ( vertical )
 	{
@@ -3118,15 +3067,15 @@ void CG_Rocket_DrawMineRate()
 		float matchTime = (float)(cg.time - cgs.levelStartTime);
 		float rate = cgs.buildPointRecoveryInitialRate /
 		             std::pow(2.0f, matchTime / (60000.0f * cgs.buildPointRecoveryRateHalfLife));
-		Rocket_SetInnerRML( va( "Recovering %d / %d BP @ %.1f BP/min.",
-		                        queuedBudget, totalBudget, rate), 0 );
+		Rocket_SetInnerRMLRaw( va( "Recovering %d / %d BP @ %.1f BP/min.",
+		                       queuedBudget, totalBudget, rate) );
 	} else {
-		Rocket_SetInnerRML( va( "The full budget of %d BP is available.",
-		                        totalBudget), 0 );
+		Rocket_SetInnerRMLRaw( va( "The full budget of %d BP is available.",
+		                       totalBudget) );
 	}
 }
 
-static INLINE qhandle_t CG_GetUnlockableIcon( int num )
+static qhandle_t CG_GetUnlockableIcon( int num )
 {
 	int index = BG_UnlockableTypeIndex( num );
 
@@ -3144,8 +3093,8 @@ static INLINE qhandle_t CG_GetUnlockableIcon( int num )
 		case UNLT_CLASS:
 			return cg_classes[ index ].classIcon;
 
-        default:
-            return 0;
+		default:
+			return 0;
 	}
 }
 
@@ -3155,15 +3104,14 @@ static void CG_Rocket_DrawPlayerUnlockedItems()
 	Color::Color  foreColour, backColour;
 	momentumThresholdIterator_t unlockableIter = { -1, 1 }, previousIter;
 
-	// data
-	team_t    team;
+	team_t team = CG_MyTeam();
 
 	// display
-	float     x, y, w, h, iw, ih, borderSize;
+	float x, y, w, h, iw, ih, borderSize;
 	bool  vertical;
 
-	int       icons, counts;
-	int       count[ 32 ] = { 0 };
+	int   icons, counts;
+	int   count[ 32 ] = { 0 };
 	struct
 	{
 		qhandle_t shader;
@@ -3174,8 +3122,6 @@ static void CG_Rocket_DrawPlayerUnlockedItems()
 	Rocket_GetProperty( "cell-color", &backColour, sizeof(Color::Color), rocketVarType_t::ROCKET_COLOR );
 	CG_GetRocketElementColor( foreColour );
 	Rocket_GetProperty( "border-width", &borderSize, sizeof( borderSize ), rocketVarType_t::ROCKET_FLOAT );
-
-	team = ( team_t ) cg.predictedPlayerState.persistant[ PERS_TEAM ];
 
 	w = rect.w - 2 * borderSize;
 	h = rect.h - 2 * borderSize;
@@ -3301,7 +3247,7 @@ static void CG_Rocket_DrawVote_internal( team_t team )
 
 	if ( !cgs.voteTime[ team ] )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3322,14 +3268,20 @@ static void CG_Rocket_DrawVote_internal( team_t team )
 	int bindTeam = CG_CurrentBindTeam();
 	std::string yeskey = CG_EscapeHTMLText( CG_KeyBinding( va( "%svote yes", team == TEAM_NONE ? "" : "team" ), bindTeam ) );
 	std::string nokey = CG_EscapeHTMLText( CG_KeyBinding( va( "%svote no", team == TEAM_NONE ? "" : "team" ), bindTeam ) );
-
+	std::string voteString = CG_EscapeHTMLText( cgs.voteString[ team ] );
+	Rocket::Core::String caller = Rocket_QuakeToRML( cgs.voteCaller[ team ], RP_EMOTICONS ); // colors are stripped by the server
 	std::string s = Str::Format( "%sVOTE(%i): %s\n"
 			"    Called by: \"%s\"\n"
 			"    [%s][<span class='material-icon'>&#xe8dc;</span>]:%i [%s][<span class='material-icon'>&#xe8db;</span>]:%i\n",
-			team == TEAM_NONE ? "" : "TEAM", sec, cgs.voteString[ team ],
-			cgs.voteCaller[ team ], yeskey, cgs.voteYes[ team ], nokey, cgs.voteNo[ team ] );
+			team == TEAM_NONE ? "" : "TEAM", sec, voteString,
+			caller.CString(), yeskey, cgs.voteYes[ team ], nokey, cgs.voteNo[ team ] );
 
-	Rocket_SetInnerRML( s.c_str(), 0 );
+	Rocket_SetInnerRMLRaw( s.c_str() );
+}
+
+static void CG_Rocket_DrawVersion()
+{
+	Rocket_SetInnerRML( PRODUCT_VERSION, 0 );
 }
 
 static void CG_Rocket_DrawVote()
@@ -3339,7 +3291,7 @@ static void CG_Rocket_DrawVote()
 
 static void CG_Rocket_DrawTeamVote()
 {
-	CG_Rocket_DrawVote_internal( ( team_t ) cg.predictedPlayerState.persistant[ PERS_TEAM ] );
+	CG_Rocket_DrawVote_internal( CG_MyTeam() );
 }
 
 static void CG_Rocket_DrawSpawnQueuePosition()
@@ -3349,7 +3301,7 @@ static void CG_Rocket_DrawSpawnQueuePosition()
 
 	if ( !( cg.snap->ps.pm_flags & PMF_QUEUED ) )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3357,7 +3309,7 @@ static void CG_Rocket_DrawSpawnQueuePosition()
 
 	if ( position < 1 )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3381,7 +3333,7 @@ static void CG_Rocket_DrawNumSpawns()
 
 	if ( !( cg.snap->ps.pm_flags & PMF_QUEUED ) )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3410,7 +3362,7 @@ static void CG_Rocket_DrawWarmup()
 
 	if ( !cg.warmupTime )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3418,7 +3370,7 @@ static void CG_Rocket_DrawWarmup()
 
 	if ( sec < 0 )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3431,8 +3383,13 @@ static void CG_Rocket_DrawProgressValue()
 	if ( *src )
 	{
 		float value = CG_Rocket_ProgressBarValue( src );
-		Rocket_SetInnerRML( va( "%d", (int) ( value * 100 ) ), 0 );
+		Rocket_SetInnerRMLRaw( va( "%d%%", (int) ( value * 100 ) ) );
 	}
+}
+
+static void CG_Rocket_DrawLoadingText()
+{
+	Rocket_SetInnerRML( cg.loadingText, 0 );
 }
 
 static void CG_Rocket_DrawLevelName()
@@ -3454,7 +3411,7 @@ static void CG_Rocket_DrawHostname()
 {
 	const char *info;
 	info = CG_ConfigString( CS_SERVERINFO );
-	Rocket_SetInnerRML( Info_ValueForKey( info, "sv_hostname" ), RP_QUAKE );
+	Rocket_SetInnerRML( Info_ValueForKey( info, "sv_hostname" ), RP_QUAKE | RP_EMOTICONS );
 }
 
 static void CG_Rocket_DrawDownloadName()
@@ -3479,7 +3436,7 @@ static void CG_Rocket_DrawDownloadTime()
 
 	if ( !*rocketInfo.downloadName )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3517,7 +3474,7 @@ static void CG_Rocket_DrawDownloadTotalSize()
 
 	if ( !*rocketInfo.downloadName )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3533,7 +3490,7 @@ static void CG_Rocket_DrawDownloadCompletedSize()
 
 	if ( !*rocketInfo.downloadName )
 	{
-		Rocket_SetInnerRML( "", 0 );
+		Rocket_SetInnerRMLRaw( "" );
 		return;
 	}
 
@@ -3551,7 +3508,7 @@ static void CG_Rocket_DrawDownloadSpeed()
 
 	if ( !*rocketInfo.downloadName )
 	{
-		Rocket_SetInnerRML ( "", 0 );
+		Rocket_SetInnerRMLRaw ( "" );
 		return;
 	}
 
@@ -3605,6 +3562,7 @@ static const elementRenderCmd_t elementRenderCmdList[] =
 	{ "itemselect_text", &CG_DrawItemSelectText, ELEMENT_HUMANS },
 	{ "jetpack", &CG_Rocket_HaveJetpck, ELEMENT_HUMANS },
 	{ "levelname", &CG_Rocket_DrawLevelName, ELEMENT_ALL },
+	{ "loadingText", &CG_Rocket_DrawLoadingText, ELEMENT_ALL },
 	{ "mine_rate", &CG_Rocket_DrawMineRate, ELEMENT_BOTH },
 	{ "minimap", &CG_Rocket_DrawMinimap, ELEMENT_ALL },
 	{ "momentum_bar", &CG_Rocket_DrawPlayerMomentumBar, ELEMENT_BOTH },
@@ -3615,6 +3573,7 @@ static const elementRenderCmd_t elementRenderCmdList[] =
 	{ "stamina_bolt", &CG_Rocket_DrawStaminaBolt, ELEMENT_HUMANS },
 	{ "tutorial", &CG_Rocket_DrawTutorial, ELEMENT_GAME },
 	{ "unlocked_items", &CG_Rocket_DrawPlayerUnlockedItems, ELEMENT_BOTH },
+	{ "version", &CG_Rocket_DrawVersion, ELEMENT_ALL },
 	{ "votes", &CG_Rocket_DrawVote, ELEMENT_GAME },
 	{ "votes_team", &CG_Rocket_DrawTeamVote, ELEMENT_BOTH },
 	{ "warmup_time", &CG_Rocket_DrawWarmup, ELEMENT_GAME },
@@ -3670,7 +3629,6 @@ void CG_Rocket_RegisterElements()
 	REGISTER_ELEMENT( "lagometer", LagometerElement )
 	REGISTER_ELEMENT( "ping", PingElement )
 	REGISTER_ELEMENT( "crosshair_name", CrosshairNamesElement )
-	REGISTER_ELEMENT( "momentum", MomentumElement )
 	REGISTER_ELEMENT( "levelshot", LevelshotElement )
 	REGISTER_ELEMENT( "levelshot_loading", LevelshotLoadingElement )
 	REGISTER_ELEMENT( "center_print", CenterPrintElement )

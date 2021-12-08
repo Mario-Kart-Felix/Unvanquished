@@ -24,7 +24,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "sg_bot_util.h"
-#include "engine/botlib/bot_types.h"
+#include "botlib/bot_types.h"
+#include "botlib/bot_api.h"
 
 //tells if all navmeshes loaded successfully
 bool navMeshLoaded = false;
@@ -64,7 +65,7 @@ void G_BotNavInit()
 
 		Q_strncpyz( bot.name, BG_Class( i )->name, sizeof( bot.name ) );
 
-		if ( !trap_BotSetupNav( &bot, &model->navHandle ) )
+		if ( !G_BotSetupNav( &bot, &model->navHandle ) )
 		{
 			return;
 		}
@@ -74,18 +75,8 @@ void G_BotNavInit()
 
 void G_BotNavCleanup()
 {
-	trap_BotShutdownNav();
+	G_BotShutdownNav();
 	navMeshLoaded = false;
-}
-
-void G_BotDisableArea( vec3_t origin, vec3_t mins, vec3_t maxs )
-{
-	trap_BotDisableArea( origin, mins, maxs );
-}
-
-void G_BotEnableArea( vec3_t origin, vec3_t mins, vec3_t maxs )
-{
-	trap_BotEnableArea( origin, mins, maxs );
 }
 
 void BotSetNavmesh( gentity_t  *self, class_t newClass )
@@ -103,7 +94,7 @@ void BotSetNavmesh( gentity_t  *self, class_t newClass )
 	          ? BG_ClassModelConfig( model->navMeshClass )->navHandle
 	          : model->navHandle;
 
-	trap_BotSetNavMesh( self->s.number, navHandle );
+	G_BotSetNavMesh( self->s.number, navHandle );
 }
 
 /*
@@ -112,45 +103,52 @@ Bot Navigation Querys
 ========================
 */
 
-float RadiusFromBounds2D( vec3_t mins, vec3_t maxs )
+static float RadiusFromBounds2D( const vec3_t mins, const vec3_t maxs )
 {
 	float rad1s = Square( mins[0] ) + Square( mins[1] );
 	float rad2s = Square( maxs[0] ) + Square( maxs[1] );
-	return sqrt( std::max( rad1s, rad2s ) );
+	return sqrtf( std::max( rad1s, rad2s ) );
 }
 
-float BotGetGoalRadius( gentity_t *self )
+float BotGetGoalRadius( const gentity_t *self )
 {
-	if ( BotTargetIsEntity( self->botMind->goal ) )
+	botTarget_t &t = self->botMind->goal;
+	if ( t.targetsCoordinates() )
 	{
-		botTarget_t *t = &self->botMind->goal;
-		if ( t->ent->s.modelindex == BA_H_MEDISTAT || t->ent->s.modelindex == BA_A_BOOSTER )
-		{
-			return self->r.maxs[0] + t->ent->r.maxs[0];
-		}
-		else
-		{
-			return RadiusFromBounds2D( t->ent->r.mins, t->ent->r.maxs ) + RadiusFromBounds2D( self->r.mins, self->r.maxs );
-		}
+		// we check the coord to be (almost) in our bounding box
+		return RadiusFromBounds2D( self->r.mins, self->r.maxs );
 	}
 	else
 	{
-		return RadiusFromBounds2D( self->r.mins, self->r.maxs );
+		// we don't check if the entity is valid: an outdated result is
+		// better than failing here
+		const gentity_t *target = t.getTargetedEntity();
+		if ( target->s.modelindex == BA_H_MEDISTAT || target->s.modelindex == BA_A_BOOSTER )
+		{
+			// we want to be quite close to medistat.
+			// TODO(freem): is this really what we want for booster?
+			return self->r.maxs[0] + target->r.maxs[0];
+		}
+		else
+		{
+			return RadiusFromBounds2D( target->r.mins, target->r.maxs ) + RadiusFromBounds2D( self->r.mins, self->r.maxs );
+		}
 	}
 }
 
-bool GoalInRange( gentity_t *self, float r )
+bool GoalInRange( const gentity_t *self, float r )
 {
 	gentity_t *ent = nullptr;
+	// we don't need to check the goal is valid here
 
-	if ( !BotTargetIsEntity( self->botMind->goal ) )
+	if ( self->botMind->goal.targetsCoordinates() )
 	{
 		return ( Distance( self->s.origin, self->botMind->nav.tpos ) < r );
 	}
 
 	while ( ( ent = G_IterateEntitiesWithinRadius( ent, self->s.origin, r ) ) )
 	{
-		if ( ent == self->botMind->goal.ent )
+		if ( ent == self->botMind->goal.getTargetedEntity() )
 		{
 			return true;
 		}
@@ -159,19 +157,19 @@ bool GoalInRange( gentity_t *self, float r )
 	return false;
 }
 
-int DistanceToGoal2DSquared( gentity_t *self )
+int DistanceToGoal2DSquared( const gentity_t *self )
 {
 	vec3_t vec;
 	vec3_t goalPos;
 
-	BotGetTargetPos( self->botMind->goal, goalPos );
+	self->botMind->goal.getPos( goalPos );
 
 	VectorSubtract( goalPos, self->s.origin, vec );
 
 	return Square( vec[ 0 ] ) + Square( vec[ 1 ] );
 }
 
-int DistanceToGoal( gentity_t *self )
+int DistanceToGoal( const gentity_t *self )
 {
 	vec3_t targetPos;
 	vec3_t selfPos;
@@ -180,12 +178,12 @@ int DistanceToGoal( gentity_t *self )
 	{
 		return -1;
 	}
-	BotGetTargetPos( self->botMind->goal, targetPos );
+	self->botMind->goal.getPos( targetPos );
 	VectorCopy( self->s.origin, selfPos );
 	return Distance( selfPos, targetPos );
 }
 
-int DistanceToGoalSquared( gentity_t *self )
+int DistanceToGoalSquared( const gentity_t *self )
 {
 	vec3_t targetPos;
 	vec3_t selfPos;
@@ -194,12 +192,12 @@ int DistanceToGoalSquared( gentity_t *self )
 	{
 		return -1;
 	}
-	BotGetTargetPos( self->botMind->goal, targetPos );
+	self->botMind->goal.getPos( targetPos );
 	VectorCopy( self->s.origin, selfPos );
 	return DistanceSquared( selfPos, targetPos );
 }
 
-bool BotPathIsWalkable( gentity_t *self, botTarget_t target )
+bool BotPathIsWalkable( const gentity_t *self, botTarget_t target )
 {
 	vec3_t selfPos, targetPos;
 	vec3_t viewNormal;
@@ -207,26 +205,20 @@ bool BotPathIsWalkable( gentity_t *self, botTarget_t target )
 
 	BG_GetClientNormal( &self->client->ps, viewNormal );
 	VectorMA( self->s.origin, self->r.mins[2], viewNormal, selfPos );
-	BotGetTargetPos( target, targetPos );
+	target.getPos( targetPos );
 
-	if ( !trap_BotNavTrace( self->s.number, &trace, selfPos, targetPos ) )
+	if ( !G_BotNavTrace( self->s.number, &trace, selfPos, targetPos ) )
 	{
 		return false;
 	}
 
-	if ( trace.frac >= 1.0f )
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
+	return trace.frac >= 1.0f;
 }
 
-void BotFindRandomPointOnMesh( gentity_t *self, vec3_t point )
+// TODO: remove
+void BotFindRandomPointOnMesh( const gentity_t *self, vec3_t point )
 {
-	trap_BotFindRandomPoint( self->s.number, point );
+	BotFindRandomPoint( self->s.number, point );
 }
 
 /*
@@ -322,11 +314,9 @@ void BotStandStill( gentity_t *self )
 
 bool BotJump( gentity_t *self )
 {
-	int staminaJumpCost;
-
 	if ( self->client->pers.team == TEAM_HUMANS )
 	{
-		staminaJumpCost = BG_Class( self->client->ps.stats[ STAT_CLASS ] )->staminaJumpCost;
+		int staminaJumpCost = BG_Class( self->client->ps.stats[ STAT_CLASS ] )->staminaJumpCost;
 
 		if ( self->client->ps.stats[STAT_STAMINA] < staminaJumpCost )
 		{
@@ -341,29 +331,37 @@ bool BotJump( gentity_t *self )
 bool BotSprint( gentity_t *self, bool enable )
 {
 	usercmd_t *botCmdBuffer = &self->botMind->cmdBuffer;
-	int       staminaJumpCost;
+	int jumpCost = BG_Class( self->client->ps.stats[ STAT_CLASS ] )->staminaJumpCost;
+	int stamina = self->client->ps.stats[ STAT_STAMINA ];
+	bool sprinting = usercmdButtonPressed( botCmdBuffer->buttons, BUTTON_SPRINT );
 
 	if ( !enable )
 	{
-		usercmdReleaseButton( botCmdBuffer->buttons, BUTTON_SPRINT );
+		if ( sprinting )
+		{
+			usercmdReleaseButton( botCmdBuffer->buttons, BUTTON_SPRINT );
+			BotWalk( self, true );
+		}
 		return false;
 	}
-
-	staminaJumpCost = BG_Class( self->client->ps.stats[ STAT_CLASS ] )->staminaJumpCost;
 
 	if ( self->client->pers.team == TEAM_HUMANS
-	     && self->client->ps.stats[ STAT_STAMINA ] > staminaJumpCost
 	     && self->botMind->botSkill.level >= 5 )
 	{
-		usercmdPressButton( botCmdBuffer->buttons, BUTTON_SPRINT );
-		BotWalk( self, false );
-		return true;
+		if ( sprinting && stamina <= jumpCost )
+		{
+			usercmdReleaseButton( botCmdBuffer->buttons, BUTTON_SPRINT );
+			BotWalk( self, true );
+			return false;
+		}
+		if ( !sprinting && stamina <= 2 * jumpCost )
+		{
+			return false;
+		}
 	}
-	else
-	{
-		usercmdReleaseButton( botCmdBuffer->buttons, BUTTON_SPRINT );
-		return false;
-	}
+	usercmdPressButton( botCmdBuffer->buttons, BUTTON_SPRINT );
+	BotWalk( self, false );
+	return true;
 }
 
 void BotWalk( gentity_t *self, bool enable )
@@ -428,7 +426,7 @@ bool BotShouldJump( gentity_t *self, gentity_t *blocker, const vec3_t dir )
 	vec3_t end;
 
 	//blocker is not on our team, so ignore
-	if ( BotGetEntityTeam( self ) != BotGetEntityTeam( blocker ) )
+	if ( G_Team( self ) != G_Team( blocker ) )
 	{
 		return false;
 	}
@@ -464,14 +462,7 @@ bool BotShouldJump( gentity_t *self, gentity_t *blocker, const vec3_t dir )
 
 	//if we can jump over it, then jump
 	//note that we also test for a blocking barricade because barricades will collapse to let us through
-	if ( blocker->s.modelindex == BA_A_BARRICADE || trace.fraction == 1.0f )
-	{
-		return true;
-	}
-	else
-	{
-		return false;
-	}
+	return blocker->s.modelindex == BA_A_BARRICADE || trace.fraction == 1.0f;
 }
 
 bool BotFindSteerTarget( gentity_t *self, vec3_t dir )
@@ -512,8 +503,8 @@ bool BotFindSteerTarget( gentity_t *self, vec3_t dir )
 	for ( i = 0; i < 5; i++, yaw1 -= 15 , yaw2 += 15 )
 	{
 		//compute forward for right
-		forward[0] = cos( DEG2RAD( yaw1 ) );
-		forward[1] = sin( DEG2RAD( yaw1 ) );
+		forward[0] = cosf( DEG2RAD( yaw1 ) );
+		forward[1] = sinf( DEG2RAD( yaw1 ) );
 		//forward is already normalized
 		//try the right
 		VectorMA( self->s.origin, BOT_OBSTACLE_AVOID_RANGE, forward, testPoint1 );
@@ -530,8 +521,8 @@ bool BotFindSteerTarget( gentity_t *self, vec3_t dir )
 		}
 
 		//compute forward for left
-		forward[0] = cos( DEG2RAD( yaw2 ) );
-		forward[1] = sin( DEG2RAD( yaw2 ) );
+		forward[0] = cosf( DEG2RAD( yaw2 ) );
+		forward[1] = sinf( DEG2RAD( yaw2 ) );
 		//forward is already normalized
 		//try the left
 		VectorMA( self->s.origin, BOT_OBSTACLE_AVOID_RANGE, forward, testPoint2 );
@@ -616,7 +607,7 @@ void BotDirectionToUsercmd( gentity_t *self, vec3_t dir, usercmd_t *cmd )
 		cmd->forwardmove = ClampChar( highestforward );
 		cmd->rightmove = ClampChar( highestright );
 	}
-	else
+	else if ( rightmove != 0 )
 	{
 		float highestright = rightmove < 0 ? -speed : speed;
 
@@ -624,6 +615,11 @@ void BotDirectionToUsercmd( gentity_t *self, vec3_t dir, usercmd_t *cmd )
 
 		cmd->forwardmove = ClampChar( highestforward );
 		cmd->rightmove = ClampChar( highestright );
+	}
+	else
+	{
+		cmd->forwardmove = 0;
+		cmd->rightmove = 0;
 	}
 }
 
@@ -668,7 +664,6 @@ void BotClampPos( gentity_t *self )
 
 void BotMoveToGoal( gentity_t *self )
 {
-	int    staminaJumpCost;
 	vec3_t dir;
 	VectorCopy( self->botMind->nav.dir, dir );
 
@@ -681,19 +676,68 @@ void BotMoveToGoal( gentity_t *self )
 	BotAvoidObstacles( self, dir );
 	BotSeek( self, dir );
 
-	staminaJumpCost = BG_Class( self->client->ps.stats[ STAT_CLASS ] )->staminaJumpCost;
-
-	//dont sprint or dodge if we dont have enough stamina and are about to slow
-	if ( self->client->pers.team == TEAM_HUMANS
-	     && self->client->ps.stats[ STAT_STAMINA ] < staminaJumpCost )
+	// dumb bots don't know how to be efficient
+	if( self->botMind->botSkill.level < 5 )
 	{
-		usercmd_t *botCmdBuffer = &self->botMind->cmdBuffer;
+		return;
+	}
 
-		usercmdReleaseButton( botCmdBuffer->buttons, BUTTON_SPRINT );
-		usercmdReleaseButton( botCmdBuffer->buttons, BUTTON_DODGE );
+	team_t targetTeam = TEAM_NONE;
+	if ( self->botMind->goal.targetsValidEntity() )
+	{
+		targetTeam = G_Team( self->botMind->goal.getTargetedEntity() );
+	}
 
-		// walk to regain stamina
-		BotWalk( self, true );
+	usercmd_t &botCmdBuffer = self->botMind->cmdBuffer;
+	switch ( self->client->pers.team )
+	{
+		case TEAM_HUMANS:
+			// if target is friendly, reach it quickly
+			if ( G_Team( self ) == targetTeam )
+			{
+				BotSprint( self, true );
+			}
+			break;
+		case TEAM_ALIENS:
+			// if target is friendly, let's go there quickly (heal, poison) by using trick moves
+			// when available (still need to implement wall walking, but that will be more complex)
+			if ( G_Team( self ) == targetTeam )
+			{
+				switch ( self->s.weapon )
+				{
+					case WP_ALEVEL1:
+						if ( self->client->ps.weaponCharge <= 50 )
+						{
+							botCmdBuffer.angles[PITCH] = ANGLE2SHORT( -CalcAimPitch( self, self->botMind->goal, LEVEL1_POUNCE_MINPITCH ) / 3 );
+							BotFireWeapon( WPM_SECONDARY, &botCmdBuffer );
+						}
+						break;
+					case WP_ALEVEL2:
+					case WP_ALEVEL2_UPG:
+						BotJump( self );
+						break;
+					case WP_ALEVEL3:
+						if ( self->client->ps.weaponCharge < LEVEL3_POUNCE_TIME )
+						{
+							botCmdBuffer.angles[PITCH] = ANGLE2SHORT( -CalcAimPitch( self, self->botMind->goal, LEVEL3_POUNCE_JUMP_MAG ) / 3 );
+							BotFireWeapon( WPM_SECONDARY, &botCmdBuffer );
+						}
+						break;
+					case WP_ALEVEL3_UPG:
+						if ( self->client->ps.weaponCharge < LEVEL3_POUNCE_TIME_UPG )
+						{
+							botCmdBuffer.angles[PITCH] = ANGLE2SHORT( -CalcAimPitch( self, self->botMind->goal, LEVEL3_POUNCE_JUMP_MAG_UPG ) / 3 );
+							BotFireWeapon( WPM_SECONDARY, &botCmdBuffer );
+						}
+						break;
+					case WP_ALEVEL4:
+						BotFireWeapon( WPM_SECONDARY, &botCmdBuffer );
+						break;
+				}
+			}
+			break;
+		default:
+			;
 	}
 }
 
@@ -701,5 +745,5 @@ bool FindRouteToTarget( gentity_t *self, botTarget_t target, bool allowPartial )
 {
 	botRouteTarget_t routeTarget;
 	BotTargetToRouteTarget( self, target, &routeTarget );
-	return trap_BotFindRoute( self->s.number, &routeTarget, allowPartial );
+	return G_BotFindRoute( self->s.number, &routeTarget, allowPartial );
 }

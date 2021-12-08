@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cg_event.c -- handle entity events at snapshot or playerstate transitions
 
 #include "cg_local.h"
+#include "rocket/rocket.h"
 
 /*
 =============
@@ -186,7 +187,7 @@ static void CG_Obituary( entityState_t *ent )
 
 	// check for single client messages
 
-	if ( cg_emoticonsInMessages.integer )
+	if ( cg_emoticonsInMessages.Get() )
 	{
 		if ( mod < MOD_UNKNOWN || mod >= (int) ARRAY_LEN( meansOfDeath ) )
 		{
@@ -611,18 +612,10 @@ Called on weapon change
 */
 void CG_OnPlayerWeaponChange()
 {
-	playerState_t *ps = &cg.snap->ps;
-
 	// Change the HUD to match the weapon. Close the old hud first
-	Rocket_ShowHud( ps->weapon );
+	Rocket_ShowHud( cg.snap->ps.weapon );
 
-	// Rebuild weapon lists if UI is in focus.
-	if ( trap_Key_GetCatcher() == KEYCATCH_UI && ps->persistant[ PERS_TEAM ] == TEAM_HUMANS )
-	{
-		CG_Rocket_BuildArmourySellList( "default" );
-		CG_Rocket_BuildArmouryBuyList( "default" );
-	}
-
+	CG_Rocket_UpdateArmouryMenu();
 	cg.weaponOffsetsFilter.Reset( );
 
 	cg.predictedPlayerEntity.pe.weapon.animationNumber = -1; //force weapon lerpframe recalculation
@@ -630,21 +623,22 @@ void CG_OnPlayerWeaponChange()
 
 /*
 =========================
-CG_OnPlayerUpgradeChange
+CG_Rocket_UpdateArmouryMenu
 
 Called on upgrade change
 =========================
 */
 
-void CG_OnPlayerUpgradeChange()
+void CG_Rocket_UpdateArmouryMenu()
 {
-	playerState_t *ps = &cg.snap->ps;
-
 	// Rebuild weapon lists if UI is in focus.
-	if ( trap_Key_GetCatcher() == KEYCATCH_UI && ps->persistant[ PERS_TEAM ] == TEAM_HUMANS )
+	if ( trap_Key_GetCatcher() == KEYCATCH_UI && CG_MyTeam() == TEAM_HUMANS )
 	{
-		CG_Rocket_BuildArmourySellList( "default" );
-		CG_Rocket_BuildArmouryBuyList( "default" );
+		Rocket::Core::ElementDocument* document = menuContext->GetDocument( rocketInfo.menu[ ROCKETMENU_ARMOURYBUY ].id );
+		if ( document->IsVisible() )
+		{
+			document->DispatchEvent( "refreshdata", {} );
+		}
 	}
 }
 
@@ -714,7 +708,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 	es = &cent->currentState;
 	event = es->event & ~EV_EVENT_BITS;
 
-	if ( cg_debugEvents.integer )
+	if ( cg_debugEvents.Get() )
 	{
 		Log::Debug( "ent:%3i  event:%3i %s", es->number, event,
 		           BG_EventName( event ) );
@@ -737,7 +731,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 	switch ( event )
 	{
 		case EV_FOOTSTEP:
-			if ( cg_footsteps.integer && ci->footsteps != FOOTSTEP_NONE )
+			if ( cg_footsteps.Get() && ci->footsteps != FOOTSTEP_NONE )
 			{
 				if ( ci->footsteps == FOOTSTEP_CUSTOM )
 				{
@@ -754,7 +748,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_FOOTSTEP_METAL:
-			if ( cg_footsteps.integer && ci->footsteps != FOOTSTEP_NONE )
+			if ( cg_footsteps.Get() && ci->footsteps != FOOTSTEP_NONE )
 			{
 				if ( ci->footsteps == FOOTSTEP_CUSTOM )
 				{
@@ -771,7 +765,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_FOOTSTEP_SQUELCH:
-			if ( cg_footsteps.integer && ci->footsteps != FOOTSTEP_NONE )
+			if ( cg_footsteps.Get() && ci->footsteps != FOOTSTEP_NONE )
 			{
 				trap_S_StartSound( nullptr, es->number, soundChannel_t::CHAN_BODY,
 				                   cgs.media.footsteps[ FOOTSTEP_FLESH ][ rand() & 3 ] );
@@ -780,7 +774,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_FOOTSPLASH:
-			if ( cg_footsteps.integer && ci->footsteps != FOOTSTEP_NONE )
+			if ( cg_footsteps.Get() && ci->footsteps != FOOTSTEP_NONE )
 			{
 				trap_S_StartSound( nullptr, es->number, soundChannel_t::CHAN_BODY,
 				                   cgs.media.footsteps[ FOOTSTEP_SPLASH ][ rand() & 3 ] );
@@ -789,7 +783,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_FOOTWADE:
-			if ( cg_footsteps.integer && ci->footsteps != FOOTSTEP_NONE )
+			if ( cg_footsteps.Get() && ci->footsteps != FOOTSTEP_NONE )
 			{
 				trap_S_StartSound( nullptr, es->number, soundChannel_t::CHAN_BODY,
 				                   cgs.media.footsteps[ FOOTSTEP_SPLASH ][ rand() & 3 ] );
@@ -798,7 +792,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_SWIM:
-			if ( cg_footsteps.integer && ci->footsteps != FOOTSTEP_NONE )
+			if ( cg_footsteps.Get() && ci->footsteps != FOOTSTEP_NONE )
 			{
 				trap_S_StartSound( nullptr, es->number, soundChannel_t::CHAN_BODY,
 				                   cgs.media.footsteps[ FOOTSTEP_SPLASH ][ rand() & 3 ] );
@@ -868,7 +862,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 
 				// if we are interpolating, we don't need to smooth steps
 				if ( cg.demoPlayback || ( cg.snap->ps.pm_flags & PMF_FOLLOW ) ||
-				     cg_nopredict.integer || cg.pmoveParams.synchronous )
+				     cg_nopredict.Get() || cg.pmoveParams.synchronous )
 				{
 					break;
 				}
@@ -897,14 +891,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 					cg.stepChange = oldStep + step;
 				}
 
-				if ( cg.stepChange > MAX_STEP_CHANGE )
-				{
-					cg.stepChange = MAX_STEP_CHANGE;
-				}
-				else if ( cg.stepChange < -MAX_STEP_CHANGE )
-				{
-					cg.stepChange = -MAX_STEP_CHANGE;
-				}
+				cg.stepChange = Math::Clamp( cg.stepChange, -MAX_STEP_CHANGE, +MAX_STEP_CHANGE );
 
 				cg.stepTime = cg.time;
 				break;
@@ -953,7 +940,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_TAUNT:
-			if ( !cg_noTaunt.integer )
+			if ( !cg_noTaunt.Get() )
 			{
 				trap_S_StartSound( nullptr, es->number, soundChannel_t::CHAN_VOICE, CG_CustomSound( es->number, "*taunt" ) );
 			}
@@ -977,11 +964,11 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_JETPACK_ENABLE:
-      cent->jetpackAnim = JANIM_SLIDEOUT;
+			cent->jetpackAnim = JANIM_SLIDEOUT;
 			break;
 
 		case EV_JETPACK_DISABLE:
-      cent->jetpackAnim = JANIM_SLIDEIN;
+			cent->jetpackAnim = JANIM_SLIDEIN;
 			break;
 
 		case EV_JETPACK_IGNITE:
@@ -1014,6 +1001,11 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 
 		case EV_FIRE_WEAPON3:
 			CG_HandleFireWeapon( cent, WPM_TERTIARY );
+			break;
+
+		case EV_FIRE_DECONSTRUCT:
+		case EV_FIRE_DECONSTRUCT_LONG:
+		case EV_DECONSTRUCT_SELECT_TARGET:
 			break;
 
 		case EV_WEAPON_RELOAD:
@@ -1100,16 +1092,14 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 
 				if ( !CG_IsTrailSystemValid( &source->muzzleTS ) )
 				{
-					source->muzzleTS = CG_SpawnNewTrailSystem( cgs.media.reactorZapTS );
-
-					if ( CG_IsTrailSystemValid( &source->muzzleTS ) )
+					if ( ( source->muzzleTS = CG_SpawnNewTrailSystem( cgs.media.reactorZapTS ) ) != nullptr )
 					{
 						CG_SetAttachmentCent( &source->muzzleTS->frontAttachment, source );
 						CG_SetAttachmentCent( &source->muzzleTS->backAttachment, target );
 						CG_AttachToCent( &source->muzzleTS->frontAttachment );
 						CG_AttachToCent( &source->muzzleTS->backAttachment );
 
-						source->muzzleTSDeathTime = cg.time + cg_teslaTrailTime.integer;
+						source->muzzleTSDeathTime = cg.time + cg_teslaTrailTime.Get();
 					}
 				}
 			}
@@ -1195,7 +1185,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 				break;
 			}
 
-			switch ( cg.predictedPlayerState.persistant[ PERS_TEAM ] )
+			switch ( CG_MyTeam() )
 			{
 				case TEAM_ALIENS:
 					trap_S_StartLocalSound( cgs.media.alienOvermindAttack, soundChannel_t::CHAN_ANNOUNCER );
@@ -1217,7 +1207,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_MAIN_DYING:
-			switch ( cg.predictedPlayerState.persistant[ PERS_TEAM ] )
+			switch ( CG_MyTeam() )
 			{
 				case TEAM_ALIENS:
 					trap_S_StartLocalSound( cgs.media.alienOvermindDying, soundChannel_t::CHAN_ANNOUNCER );
@@ -1275,7 +1265,7 @@ void CG_EntityEvent( centity_t *cent, vec3_t position )
 			break;
 
 		case EV_NO_SPAWNS:
-			switch ( cg.predictedPlayerState.persistant[ PERS_TEAM ] )
+			switch ( CG_MyTeam() )
 			{
 				case TEAM_ALIENS:
 					trap_S_StartLocalSound( cgs.media.alienOvermindSpawns, soundChannel_t::CHAN_ANNOUNCER );

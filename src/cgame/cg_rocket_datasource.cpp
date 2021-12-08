@@ -268,7 +268,7 @@ void CG_Rocket_BuildServerList( const char *args )
 			char info[ MAX_STRING_CHARS ];
 			int ping, bots, clients, maxClients;
 
-			Com_Memset( &data, 0, sizeof( data ) );
+			memset( &data, 0, sizeof( data ) );
 
 			if ( !trap_LAN_ServerIsVisible( netSrc, i ) )
 			{
@@ -765,8 +765,14 @@ static void AddToAlOutputs( char *name )
 
 void CG_Rocket_SetAlOutputsOutput( const char*, int index )
 {
+	const char *device = "";
+	if (index >= 0 && index < rocketInfo.data.alOutputsCount )
+	{
+		device = rocketInfo.data.alOutputs[ index ];
+	}
+
 	rocketInfo.data.alOutputIndex = index;
-	trap_Cvar_Set( "audio.al.device", rocketInfo.data.alOutputs[ index ] );
+	trap_Cvar_Set( "audio.al.device", device );
 	trap_Cvar_AddFlags( "audio.al.device", CVAR_ARCHIVE );
 }
 
@@ -1296,9 +1302,9 @@ void CG_Rocket_CleanUpHumanSpawnItems( const char* )
 
 enum
 {
-    ROCKETDS_BOTH,
-    ROCKETDS_WEAPONS,
-    ROCKETDS_UPGRADES
+	ROCKETDS_BOTH,
+	ROCKETDS_WEAPONS,
+	ROCKETDS_UPGRADES
 };
 
 void CG_Rocket_CleanUpArmouryBuyList( const char *table )
@@ -1326,6 +1332,79 @@ void CG_Rocket_CleanUpArmouryBuyList( const char *table )
 	rocketInfo.data.armouryBuyListCount[ tblIndex ] = 0;
 }
 
+static Str::StringRef WeaponAvailability( int weapon )
+{
+	playerState_t *ps = &cg.snap->ps;
+	int credits = ps->persistant[ PERS_CREDIT ];
+	weapon_t currentweapon = BG_PrimaryWeapon( ps->stats );
+	credits += BG_Weapon( currentweapon )->price;
+
+	if ( BG_InventoryContainsWeapon( weapon, cg.predictedPlayerState.stats ) )
+		return "active";
+
+	if ( !BG_WeaponUnlocked( weapon ) || BG_WeaponDisabled( weapon ) )
+		return "locked";
+
+	if ( BG_Weapon( weapon )->price > credits )
+		return "expensive";
+
+	return "available";
+}
+
+static const char* WeaponDamage( weapon_t weapon )
+{
+	switch( weapon )
+	{
+		case WP_HBUILD: return "0";
+		case WP_MACHINEGUN: return "10";
+		case WP_PAIN_SAW: return "90";
+		case WP_SHOTGUN: return "40";
+		case WP_LAS_GUN: return "30";
+		case WP_MASS_DRIVER: return "50";
+		case WP_CHAINGUN: return "60";
+		case WP_FLAMER: return "70";
+		case WP_PULSE_RIFLE: return "70";
+		case WP_LUCIFER_CANNON: return "100";
+		default: return "0";
+	}
+}
+
+static const char* WeaponRange( weapon_t weapon )
+{
+	switch( weapon )
+	{
+		case WP_HBUILD: return "0";
+		case WP_MACHINEGUN: return "75";
+		case WP_PAIN_SAW: return "10";
+		case WP_SHOTGUN: return "30";
+		case WP_LAS_GUN: return "100";
+		case WP_MASS_DRIVER: return "100";
+		case WP_CHAINGUN: return "50";
+		case WP_FLAMER: return "25";
+		case WP_PULSE_RIFLE: return "80";
+		case WP_LUCIFER_CANNON: return "75";
+		default: return "0";
+	}
+}
+
+static const char* WeaponRateOfFire( weapon_t weapon )
+{
+	switch( weapon )
+	{
+		case WP_HBUILD: return "0";
+		case WP_MACHINEGUN: return "70";
+		case WP_PAIN_SAW: return "100";
+		case WP_SHOTGUN: return "100";
+		case WP_LAS_GUN: return "40";
+		case WP_MASS_DRIVER: return "20";
+		case WP_CHAINGUN: return "80";
+		case WP_FLAMER: return "70";
+		case WP_PULSE_RIFLE: return "70";
+		case WP_LUCIFER_CANNON: return "10";
+		default: return "0";
+	}
+}
+
 static void AddWeaponToBuyList( int i, const char *table, int tblIndex )
 {
 	static char buf[ MAX_STRING_CHARS ];
@@ -1339,11 +1418,51 @@ static void AddWeaponToBuyList( int i, const char *table, int tblIndex )
 		Info_SetValueForKey( buf, "name", BG_Weapon( i )->humanName, false );
 		Info_SetValueForKey( buf, "price", va( "%d", BG_Weapon( i )->price ), false );
 		Info_SetValueForKey( buf, "description", BG_Weapon( i )->info, false );
+		Info_SetValueForKey( buf, "icon", CG_GetShaderNameFromHandle( cg_weapons[ i ].ammoIcon ), false );
+		Info_SetValueForKey( buf, "availability", WeaponAvailability( i ).c_str(), false );
+		Info_SetValueForKey( buf, "cmdName", BG_Weapon( i )->name, false );
+		Info_SetValueForKey( buf, "damage", WeaponDamage( weapon_t(i) ), false );
+		Info_SetValueForKey( buf, "rate", WeaponRateOfFire( weapon_t(i) ), false );
+		Info_SetValueForKey( buf, "range", WeaponRange( weapon_t(i) ), false );
 
 		Rocket_DSAddRow( "armouryBuyList", table, buf );
 
 		rocketInfo.data.armouryBuyList[ tblIndex ][ rocketInfo.data.armouryBuyListCount[ tblIndex ]++ ] = i;
 	}
+}
+
+static bool CanAffordUpgrade( upgrade_t upgrade, int stats[] )
+{
+	playerState_t *ps = &cg.snap->ps;
+	int credits = ps->persistant[ PERS_CREDIT ];
+
+	const int slots = BG_Upgrade( upgrade )->slots;
+
+	for ( int i = UP_NONE; i < UP_NUM_UPGRADES; i++ )
+	{
+		bool usesTheSameSlot = slots & BG_Upgrade( i )->slots;
+		if ( BG_InventoryContainsUpgrade( i, stats ) && usesTheSameSlot )
+		{
+			// conflicting item that will be replaced, add it to funds
+			credits += BG_Upgrade( i )->price;
+		}
+	}
+
+	return BG_Upgrade( upgrade )->price <= credits;
+}
+
+static Str::StringRef UpgradeAvailability( upgrade_t upgrade )
+{
+	if ( BG_InventoryContainsUpgrade( upgrade, cg.snap->ps.stats ) )
+		return "active";
+
+	if ( !BG_UpgradeUnlocked( upgrade ) || BG_UpgradeDisabled( upgrade ) )
+		return "locked";
+
+	if ( !CanAffordUpgrade( upgrade, cg.snap->ps.stats ) )
+		return "expensive";
+
+	return "available";
 }
 
 static void AddUpgradeToBuyList( int i, const char *table, int tblIndex )
@@ -1365,6 +1484,9 @@ static void AddUpgradeToBuyList( int i, const char *table, int tblIndex )
 		Info_SetValueForKey( buf, "name", BG_Upgrade( i )->humanName, false );
 		Info_SetValueForKey( buf, "price", va( "%d", BG_Upgrade( i )->price ), false );
 		Info_SetValueForKey( buf, "description", BG_Upgrade( i )->info, false );
+		Info_SetValueForKey( buf, "availability", UpgradeAvailability( upgrade_t(i) ).c_str(), false );
+		Info_SetValueForKey( buf, "cmdName", BG_Upgrade( i )->name, false );
+		Info_SetValueForKey( buf, "icon", CG_GetShaderNameFromHandle( cg_upgrades[ i ].upgradeIcon ), false );
 
 		Rocket_DSAddRow( "armouryBuyList", table, buf );
 
@@ -1416,8 +1538,14 @@ void CG_Rocket_BuildArmouryBuyList( const char *table )
 
 	if ( tblIndex != ROCKETDS_UPGRADES )
 	{
+		// Make ckit first so that it can be accessed with a low number key in circlemenus
+		AddWeaponToBuyList( WP_HBUILD, "default", ROCKETDS_BOTH );
+		AddWeaponToBuyList( WP_HBUILD, "weapons", ROCKETDS_WEAPONS );
+
 		for ( i = 0; i <= WP_NUM_WEAPONS; ++i )
 		{
+			if ( i == WP_HBUILD ) continue;
+
 			AddWeaponToBuyList( i, "default", ROCKETDS_BOTH );
 			AddWeaponToBuyList( i, "weapons", ROCKETDS_WEAPONS );
 		}
@@ -1434,197 +1562,29 @@ void CG_Rocket_BuildArmouryBuyList( const char *table )
 
 }
 
-void CG_Rocket_SetArmouryBuyList( const char *table, int index )
-{
-	char c = table ? *table : 'd';
-	int tblIndex;
-
-	switch ( c )
-	{
-		case 'W':
-		case 'w':
-			tblIndex = ROCKETDS_WEAPONS;
-			break;
-
-		case 'U':
-		case 'u':
-			tblIndex = ROCKETDS_UPGRADES;
-			break;
-
-		default:
-			tblIndex = ROCKETDS_BOTH;
-	}
-
-	rocketInfo.data.selectedArmouryBuyItem[ tblIndex ] = index;
-
-}
-
-void CG_Rocket_BuildArmourySellList( const char *table );
-
-void CG_Rocket_ExecArmouryBuyList( const char *table )
-{
-	int item;
-	const char *buy = nullptr;
-	char c = table ? *table : 'd';
-	int tblIndex;
-
-	switch ( c )
-	{
-		case 'W':
-		case 'w':
-			tblIndex = ROCKETDS_WEAPONS;
-			break;
-
-		case 'U':
-		case 'u':
-			tblIndex = ROCKETDS_UPGRADES;
-			break;
-
-		default:
-			tblIndex = ROCKETDS_BOTH;
-	}
-
-	if ( ( item = rocketInfo.data.armouryBuyList[ tblIndex ][ rocketInfo.data.selectedArmouryBuyItem[ tblIndex ] ] ) > WP_NUM_WEAPONS )
-	{
-		item -= WP_NUM_WEAPONS;
-
-		if ( BG_Upgrade( item ) )
-		{
-			buy = BG_Upgrade( item )->name;
-
-			if ( BG_Upgrade( item )->slots & BG_SlotsForInventory( cg.predictedPlayerState.stats ) )
-			{
-				int i;
-
-				for ( i = 0; i < UP_NUM_UPGRADES; ++i )
-				{
-					if ( i != item &&  BG_Upgrade( i )->slots == BG_Upgrade( item )->slots )
-					{
-						trap_SendClientCommand( va( "sell %s", BG_Upgrade( i )->name ) );
-					}
-				}
-			}
-		}
-	}
-
-	else
-	{
-		if ( BG_Weapon( item ) )
-		{
-			buy = BG_Weapon( item )->name;
-			trap_SendClientCommand( va( "sell %s", BG_Weapon( BG_GetPlayerWeapon( &cg.predictedPlayerState ) )->name ) );
-		}
-	}
-
-	if ( buy )
-	{
-		trap_SendClientCommand( va( "buy %s", buy ) );
-		CG_Rocket_BuildArmouryBuyList( "default" );
-		CG_Rocket_BuildArmourySellList( "default" );
-	}
-}
-
-void CG_Rocket_CleanUpArmourySellList( const char* )
-{
-	rocketInfo.data.armourySellListCount = 0;
-	rocketInfo.data.selectedArmourySellItem = -1;
-}
-
-void CG_Rocket_BuildArmourySellList( const char *table )
-{
-	static char buf[ MAX_STRING_CHARS ];
-
-	if ( rocketInfo.cstate.connState < connstate_t::CA_ACTIVE )
-	{
-		return;
-	}
-
-	if ( !Q_stricmp( table, "default" ) )
-	{
-		int i;
-
-		Rocket_DSClearTable( "armourySellList", "default" );
-		CG_Rocket_CleanUpArmourySellList( "default" );
-
-		for ( i = WP_NONE + 1; i < WP_NUM_WEAPONS; ++i )
-		{
-			if ( BG_InventoryContainsWeapon( i, cg.predictedPlayerState.stats ) && BG_Weapon( i )->purchasable )
-			{
-				buf[ 0 ] = '\0';
-
-				rocketInfo.data.armourySellList[ rocketInfo.data.armourySellListCount++ ] = i;
-
-				Info_SetValueForKey( buf, "name", BG_Weapon( i )->humanName, false );
-
-				Rocket_DSAddRow( "armourySellList", "default", buf );
-			}
-		}
-
-		for ( i = UP_NONE + 1; i < UP_NUM_UPGRADES; ++i )
-		{
-			if ( BG_InventoryContainsUpgrade( i, cg.predictedPlayerState.stats ) && BG_Upgrade( i )->purchasable )
-			{
-				buf[ 0 ] = '\0';
-
-				rocketInfo.data.armourySellList[ rocketInfo.data.armourySellListCount++ ] = i + WP_NUM_WEAPONS;
-
-				Info_SetValueForKey( buf, "name", BG_Upgrade( i )->humanName, false );
-
-				Rocket_DSAddRow( "armourySellList", "default", buf );
-			}
-		}
-	}
-}
-
-void CG_Rocket_SetArmourySellList( const char*, int index )
-{
-	rocketInfo.data.selectedArmourySellItem = index;
-}
-
-void CG_Rocket_ExecArmourySellList( const char* )
-{
-	int item;
-	const char *sell = nullptr;
-
-	if ( rocketInfo.data.selectedArmourySellItem < 0 || rocketInfo.data.selectedArmourySellItem >= rocketInfo.data.armourySellListCount )
-	{
-		return;
-	}
-
-	item = rocketInfo.data.armourySellList[ rocketInfo.data.selectedArmourySellItem ];
-
-	if ( item > WP_NUM_WEAPONS )
-	{
-		item -= WP_NUM_WEAPONS;
-
-		if ( BG_Upgrade( item ) )
-		{
-			sell = BG_Upgrade( item )->name;
-			BG_RemoveUpgradeFromInventory( item, cg.predictedPlayerState.stats );
-		}
-	}
-
-	else
-	{
-		if ( BG_Weapon( item ) )
-		{
-			sell = BG_Weapon( item )->name;
-		}
-	}
-
-	if ( sell )
-	{
-		trap_SendClientCommand( va( "sell %s", sell ) );
-		CG_Rocket_BuildArmourySellList( "default" );
-		CG_Rocket_BuildArmouryBuyList( "default" );
-	}
-}
-
 void CG_Rocket_CleanUpAlienEvolveList( const char* )
 {
-	rocketInfo.data.selectedAlienEvolve = -1;
 	rocketInfo.data.alienEvolveListCount = 0;
 
+}
+
+static Str::StringRef EvolveAvailability( class_t alienClass )
+{
+	evolveInfo_t info = BG_ClassEvolveInfoFromTo( cg.predictedPlayerState.stats[ STAT_CLASS ], alienClass );
+
+	if ( cg.predictedPlayerState.stats[ STAT_CLASS ] == alienClass )
+		return "active";
+
+	if ( !info.classIsUnlocked )
+		return "locked";
+
+	if ( cg.predictedPlayerState.persistant[ PERS_CREDIT ] < info.evolveCost )
+		return "expensive";
+
+	if ( info.isDevolving && CG_DistanceToBase() > cgs.devolveMaxBaseDistance )
+		return "overmindfar";
+
+	return "available";
 }
 
 void CG_Rocket_BuildAlienEvolveList( const char *table )
@@ -1646,49 +1606,62 @@ void CG_Rocket_BuildAlienEvolveList( const char *table )
 
 		for ( i = 0; i < PCL_NUM_CLASSES; ++i )
 		{
-			if ( BG_Class( i )->team == TEAM_ALIENS )
+			// We are building the list for alien evolutions
+			if ( BG_Class( i )->team != TEAM_ALIENS )
 			{
-				buf[ 0 ] = '\0';
-				price = BG_CostToEvolve( cg.predictedPlayerState.stats[ STAT_CLASS ], i );
-				if( price == CANT_EVOLVE){
-					price = 0;
-				}
-				if( price < 0 ){
-					price *= (( float ) cg.predictedPlayerState.stats[ STAT_HEALTH ] / ( float ) BG_Class( cg.predictedPlayerState.stats[ STAT_CLASS ] )->health ) * DEVOLVE_RETURN_RATE;
-				}
-				Info_SetValueForKey( buf, "num", va( "%d", i ), false );
-				Info_SetValueForKey( buf, "name", BG_ClassModelConfig( i )->humanName, false );
-				Info_SetValueForKey( buf, "description", BG_Class( i )->info, false );
-				Info_SetValueForKey( buf, "price", va( "%.1f", price / CREDITS_PER_EVO ), false );
-
-				Rocket_DSAddRow( "alienEvolveList", "default", buf );
-
-				rocketInfo.data.alienEvolveList[ rocketInfo.data.alienEvolveListCount++ ] = i;
+				continue;
 			}
+
+			buf[ 0 ] = '\0';
+			price = static_cast<float>( BG_ClassEvolveInfoFromTo(
+						cg.predictedPlayerState.stats[ STAT_CLASS ], i ).evolveCost );
+			if( price < 0.0f ){
+				price *= (( float ) cg.predictedPlayerState.stats[ STAT_HEALTH ] / ( float ) BG_Class( cg.predictedPlayerState.stats[ STAT_CLASS ] )->health ) * DEVOLVE_RETURN_FRACTION;
+			}
+			Info_SetValueForKey( buf, "num", va( "%d", i ), false );
+			Info_SetValueForKey( buf, "name", BG_ClassModelConfig( i )->humanName, false );
+			Info_SetValueForKey( buf, "description", BG_Class( i )->info, false );
+			Info_SetValueForKey( buf, "availability", EvolveAvailability( class_t(i) ).c_str(), false );
+			Info_SetValueForKey( buf, "icon", BG_Class( i )->icon, false );
+			Info_SetValueForKey( buf, "cmdName", BG_Class( i )->name, false );
+			if (price >= 0.0f) {
+				Info_SetValueForKey( buf, "price", va( "Price: %.1f", price / CREDITS_PER_EVO ), false );
+			}
+			else
+			{
+				Info_SetValueForKey( buf, "price", va( "Returned: %.1f", -price / CREDITS_PER_EVO ), false );
+			}
+			bool doublegranger = ( i == PCL_ALIEN_BUILDER0 && BG_ClassUnlocked( PCL_ALIEN_BUILDER0_UPG ) && !BG_ClassDisabled( PCL_ALIEN_BUILDER0_UPG ) )
+				|| ( i == PCL_ALIEN_BUILDER0_UPG && ( !BG_ClassUnlocked( PCL_ALIEN_BUILDER0_UPG ) ) );
+			Info_SetValueForKey( buf, "visible", (doublegranger ? "false" : "true"), false );
+
+			Rocket_DSAddRow( "alienEvolveList", "default", buf );
+
+			rocketInfo.data.alienEvolveList[ rocketInfo.data.alienEvolveListCount++ ] = i;
 		}
-	}
-}
-
-void CG_Rocket_SetAlienEvolveList( const char*, int index )
-{
-	rocketInfo.data.selectedAlienEvolve = index;
-}
-
-void CG_Rocket_ExecAlienEvolveList( const char* )
-{
-	class_t evo = ( class_t ) rocketInfo.data.alienEvolveList[ rocketInfo.data.selectedAlienEvolve ];
-
-	if ( BG_Class( evo ) && BG_ClassCanEvolveFromTo( cg.predictedPlayerState.stats[ STAT_CLASS ], evo, cg.predictedPlayerState.persistant[ PERS_CREDIT ] ) >= 0 )
-	{
-		trap_SendClientCommand( va( "class %s", BG_Class( evo )->name ) );
-		Rocket_DocumentAction( rocketInfo.menu[ ROCKETMENU_ALIENEVOLVE ].id, "hide" );
 	}
 }
 
 void CG_Rocket_CleanUpHumanBuildList( const char*)
 {
-	rocketInfo.data.selectedHumanBuild = -1;
 	rocketInfo.data.humanBuildListCount = 0;
+}
+
+static Str::StringRef BuildableAvailability( buildable_t buildable )
+{
+	int spentBudget     = cg.snap->ps.persistant[ PERS_SPENTBUDGET ];
+	int markedBudget    = cg.snap->ps.persistant[ PERS_MARKEDBUDGET ];
+	int totalBudet      = cg.snap->ps.persistant[ PERS_TOTALBUDGET ];
+	int queuedBudget    = cg.snap->ps.persistant[ PERS_QUEUEDBUDGET ];
+	int availableBudget = std::max( 0, totalBudet - ((spentBudget - markedBudget) + queuedBudget));
+
+	if ( BG_BuildableDisabled( buildable ) || !BG_BuildableUnlocked( buildable ) )
+		return "locked";
+
+	if ( BG_Buildable( buildable )->buildPoints > availableBudget )
+		return "expensive";
+
+	return "available";
 }
 
 void CG_Rocket_BuildHumanBuildList( const char *table )
@@ -1709,42 +1682,31 @@ void CG_Rocket_BuildHumanBuildList( const char *table )
 
 		for ( i = BA_NONE + 1; i < BA_NUM_BUILDABLES; ++i )
 		{
-			if ( BG_Buildable( i )->team == TEAM_HUMANS )
+			// We are building the human buildable list
+			if ( BG_Buildable( i )->team != TEAM_HUMANS )
 			{
-				buf[ 0 ] = '\0';
-
-				Info_SetValueForKey( buf, "num", va( "%d", i ), false );
-				Info_SetValueForKey( buf, "name", BG_Buildable( i )->humanName, false );
-				Info_SetValueForKey( buf, "cost", va( "%d", BG_Buildable( i )->buildPoints ), false );
-				Info_SetValueForKey( buf, "description", BG_Buildable( i )->info, false );
-
-				Rocket_DSAddRow( "humanBuildList", "default", buf );
-
-				rocketInfo.data.humanBuildList[ rocketInfo.data.humanBuildListCount++ ] = i;
+				continue;
 			}
+
+			buf[ 0 ] = '\0';
+
+			Info_SetValueForKey( buf, "num", va( "%d", i ), false );
+			Info_SetValueForKey( buf, "name", BG_Buildable( i )->humanName, false );
+			Info_SetValueForKey( buf, "cost", va( "%d", BG_Buildable( i )->buildPoints ), false );
+			Info_SetValueForKey( buf, "description", BG_Buildable( i )->info, false );
+			Info_SetValueForKey( buf, "icon", BG_Buildable( i )->icon, false );
+			Info_SetValueForKey( buf, "cmdName", BG_Buildable( i )->name, false );
+			Info_SetValueForKey( buf, "availability", BuildableAvailability( buildable_t(i) ).c_str(), false );
+
+			Rocket_DSAddRow( "humanBuildList", "default", buf );
+
+			rocketInfo.data.humanBuildList[ rocketInfo.data.humanBuildListCount++ ] = i;
 		}
-	}
-}
-
-void CG_Rocket_SetHumanBuildList( const char*, int index )
-{
-	rocketInfo.data.selectedHumanBuild = index;
-}
-
-void CG_Rocket_ExecHumanBuildList( const char* )
-{
-	buildable_t build = ( buildable_t ) rocketInfo.data.humanBuildList[ rocketInfo.data.selectedHumanBuild ];
-
-	if ( BG_Buildable( build ) )
-	{
-		trap_SendClientCommand( va( "build %s", BG_Buildable( build )->name ) );
-		Rocket_DocumentAction( rocketInfo.menu[ ROCKETMENU_HUMANBUILD ].id, "hide" );
 	}
 }
 
 void CG_Rocket_CleanUpAlienBuildList( const char* )
 {
-	rocketInfo.data.selectedAlienBuild = -1;
 	rocketInfo.data.alienBuildListCount = 0;
 }
 
@@ -1766,36 +1728,25 @@ void CG_Rocket_BuildAlienBuildList( const char *table )
 
 		for ( i = BA_NONE + 1; i < BA_NUM_BUILDABLES; ++i )
 		{
-			if ( BG_Buildable( i )->team == TEAM_ALIENS )
+			if ( BG_Buildable( i )->team != TEAM_ALIENS )
 			{
-				buf[ 0 ] = '\0';
-
-				Info_SetValueForKey( buf, "num", va( "%d", (int) i ), false );
-				Info_SetValueForKey( buf, "name", BG_Buildable( i )->humanName, false );
-				Info_SetValueForKey( buf, "cost", va( "%d", BG_Buildable( i )->buildPoints ), false );
-				Info_SetValueForKey( buf, "description", BG_Buildable( i )->info, false );
-
-				Rocket_DSAddRow( "alienBuildList", "default", buf );
-
-				rocketInfo.data.alienBuildList[ rocketInfo.data.alienBuildListCount++ ] = i;
+				continue;
 			}
+
+			buf[ 0 ] = '\0';
+
+			Info_SetValueForKey( buf, "num", va( "%d", (int) i ), false );
+			Info_SetValueForKey( buf, "name", BG_Buildable( i )->humanName, false );
+			Info_SetValueForKey( buf, "cost", va( "%d", BG_Buildable( i )->buildPoints ), false );
+			Info_SetValueForKey( buf, "description", BG_Buildable( i )->info, false );
+			Info_SetValueForKey( buf, "icon", BG_Buildable( i )->icon, false );
+			Info_SetValueForKey( buf, "cmdName", BG_Buildable( i )->name, false );
+			Info_SetValueForKey( buf, "availability", BuildableAvailability( buildable_t(i) ).c_str(), false );
+
+			Rocket_DSAddRow( "alienBuildList", "default", buf );
+
+			rocketInfo.data.alienBuildList[ rocketInfo.data.alienBuildListCount++ ] = i;
 		}
-	}
-}
-
-void CG_Rocket_SetAlienBuildList( const char*, int index )
-{
-	rocketInfo.data.selectedAlienBuild = index;
-}
-
-void CG_Rocket_ExecAlienBuildList( const char* )
-{
-	buildable_t build = ( buildable_t ) rocketInfo.data.alienBuildList[ rocketInfo.data.selectedAlienBuild ];
-
-	if ( BG_Buildable( build ) )
-	{
-		trap_SendClientCommand( va( "build %s", BG_Buildable( build )->name ) );
-		Rocket_DocumentAction( rocketInfo.menu[ ROCKETMENU_ALIENBUILD ].id, "hide" );
 	}
 }
 
@@ -1878,7 +1829,6 @@ void CG_Rocket_ExecAlienSpawnList( const char* )
 
 void CG_Rocket_CleanUpBeaconList( const char* )
 {
-	rocketInfo.data.selectedBeacon = -1;
 	rocketInfo.data.beaconListCount = 0;
 }
 
@@ -1911,6 +1861,7 @@ void CG_Rocket_BuildBeaconList( const char *table )
 			Info_SetValueForKey( buf, "num", va( "%d", i ), false );
 			Info_SetValueForKey( buf, "name", ba->humanName, false );
 			Info_SetValueForKey( buf, "desc", ba->desc, false );
+			Info_SetValueForKey( buf, "icon", CG_GetShaderNameFromHandle( ba->icon[ 0 ][ 0 ] ), false );
 
 			Rocket_DSAddRow( "beaconList", "default", buf );
 
@@ -1919,23 +1870,6 @@ void CG_Rocket_BuildBeaconList( const char *table )
 	}
 }
 
-void CG_Rocket_SetBeaconList( const char*, int index )
-{
-	rocketInfo.data.selectedBeacon = index;
-}
-
-void CG_Rocket_ExecBeaconList( const char* )
-{
-	const beaconAttributes_t *ba;
-
-	ba = BG_Beacon( rocketInfo.data.beaconList[ rocketInfo.data.selectedBeacon ] );
-
-	if( !ba )
-		return;
-
-	trap_SendClientCommand( va( "beacon %s", ba->name ) );
-	Rocket_DocumentAction( rocketInfo.menu[ ROCKETMENU_BEACONS ].id, "hide" );
-}
 
 static void nullSortFunc( const char*, const char* )
 {
@@ -1954,6 +1888,10 @@ static int nullGetFunc( const char* )
 	return -1;
 }
 
+static void nullSetFunc( const char*, int )
+{
+}
+
 struct dataSourceCmd_t
 {
 	const char *name;
@@ -1968,15 +1906,14 @@ struct dataSourceCmd_t
 
 static const dataSourceCmd_t dataSourceCmdList[] =
 {
-	{ "alienBuildList", &CG_Rocket_BuildAlienBuildList, &nullSortFunc, &CG_Rocket_CleanUpAlienBuildList, &CG_Rocket_SetAlienBuildList, &nullFilterFunc, &CG_Rocket_ExecAlienBuildList, &nullGetFunc },
-	{ "alienEvolveList", &CG_Rocket_BuildAlienEvolveList, &nullSortFunc, &CG_Rocket_CleanUpAlienEvolveList, &CG_Rocket_SetAlienEvolveList, &nullFilterFunc, &CG_Rocket_ExecAlienEvolveList, &nullGetFunc },
+	{ "alienBuildList", &CG_Rocket_BuildAlienBuildList, &nullSortFunc, &CG_Rocket_CleanUpAlienBuildList, &nullSetFunc, &nullFilterFunc, &nullExecFunc, &nullGetFunc },
+	{ "alienEvolveList", &CG_Rocket_BuildAlienEvolveList, &nullSortFunc, &CG_Rocket_CleanUpAlienEvolveList, &nullSetFunc, &nullFilterFunc, &nullExecFunc, &nullGetFunc },
 	{ "alienSpawnClass", &CG_Rocket_BuildAlienSpawnList, &nullSortFunc, &CG_Rocket_CleanUpAlienSpawnList, &CG_Rocket_SetAlienSpawnList, &nullFilterFunc, &CG_Rocket_ExecAlienSpawnList, &nullGetFunc },
 	{ "alOutputs", &CG_Rocket_BuildAlOutputs, &nullSortFunc, &CG_Rocket_CleanUpAlOutputs, &CG_Rocket_SetAlOutputsOutput, &nullFilterFunc, &nullExecFunc, &nullGetFunc },
-	{ "armouryBuyList", &CG_Rocket_BuildArmouryBuyList, &nullSortFunc, &CG_Rocket_CleanUpArmouryBuyList, &CG_Rocket_SetArmouryBuyList, &nullFilterFunc, &CG_Rocket_ExecArmouryBuyList, &nullGetFunc },
-	{ "armourySellList", &CG_Rocket_BuildArmourySellList, &nullSortFunc, &CG_Rocket_CleanUpArmourySellList, &CG_Rocket_SetArmourySellList, &nullFilterFunc, &CG_Rocket_ExecArmourySellList, &nullGetFunc },
-	{ "beaconList", &CG_Rocket_BuildBeaconList, &nullSortFunc, &CG_Rocket_CleanUpBeaconList, &CG_Rocket_SetBeaconList, &nullFilterFunc, &CG_Rocket_ExecBeaconList, &nullGetFunc },
+	{ "armouryBuyList", &CG_Rocket_BuildArmouryBuyList, &nullSortFunc, &CG_Rocket_CleanUpArmouryBuyList, &nullSetFunc, &nullFilterFunc, &nullExecFunc, &nullGetFunc },
+	{ "beaconList", &CG_Rocket_BuildBeaconList, &nullSortFunc, &CG_Rocket_CleanUpBeaconList, &nullSetFunc, &nullFilterFunc, &nullExecFunc, &nullGetFunc },
 	{ "demoList", &CG_Rocket_BuildDemoList, &nullSortFunc, &CG_Rocket_CleanUpDemoList, &CG_Rocket_SetDemoListDemo, &nullFilterFunc, &CG_Rocket_ExecDemoList, &nullGetFunc },
-	{ "humanBuildList", &CG_Rocket_BuildHumanBuildList, &nullSortFunc, &CG_Rocket_CleanUpHumanBuildList, &CG_Rocket_SetHumanBuildList, &nullFilterFunc, &CG_Rocket_ExecHumanBuildList, &nullGetFunc },
+	{ "humanBuildList", &CG_Rocket_BuildHumanBuildList, &nullSortFunc, &CG_Rocket_CleanUpHumanBuildList, &nullSetFunc, &nullFilterFunc, &nullExecFunc, &nullGetFunc },
 	{ "humanSpawnItems", &CG_Rocket_BuildHumanSpawnItems, &nullSortFunc, CG_Rocket_CleanUpHumanSpawnItems, &CG_Rocket_SetHumanSpawnItems, &nullFilterFunc, &CG_Rocket_ExecHumanSpawnItems, &nullGetFunc },
 	{ "languages", &CG_Rocket_BuildLanguageList, &nullSortFunc, &CG_Rocket_CleanUpLanguageList, &CG_Rocket_SetLanguageListLanguage, &nullFilterFunc, &nullExecFunc, &CG_Rocket_GetLanguageListIndex },
 	{ "mapList", &CG_Rocket_BuildMapList, &nullSortFunc, &CG_Rocket_CleanUpMapList, &CG_Rocket_SetMapListIndex, &nullFilterFunc, &nullExecFunc, &nullGetFunc },

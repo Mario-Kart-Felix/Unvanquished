@@ -25,36 +25,36 @@ along with Unvanquished.  If not, see <http://www.gnu.org/licenses/>.
 #include "Entities.h"
 #include "CBSE.h"
 
-bool Entities::OnSameTeam(Entity &firstEntity, Entity &secndEntity) {
-	TeamComponent* firstTeamComponent = firstEntity.Get<TeamComponent>();
-	TeamComponent* secndTeamComponent = secndEntity.Get<TeamComponent>();
+bool Entities::OnSameTeam(Entity const &firstEntity, Entity const &secndEntity) {
+	TeamComponent const* firstTeamComponent = firstEntity.Get<TeamComponent>();
+	TeamComponent const* secndTeamComponent = secndEntity.Get<TeamComponent>();
 	if (!firstTeamComponent || !secndTeamComponent) return false;
 	return *firstTeamComponent == *secndTeamComponent;
 }
 
-bool Entities::OnOpposingTeams(Entity &firstEntity, Entity &secndEntity) {
-	TeamComponent* firstTeamComponent = firstEntity.Get<TeamComponent>();
-	TeamComponent* secndTeamComponent = secndEntity.Get<TeamComponent>();
+bool Entities::OnOpposingTeams(Entity const &firstEntity, Entity const &secndEntity) {
+	TeamComponent const* firstTeamComponent = firstEntity.Get<TeamComponent>();
+	TeamComponent const* secndTeamComponent = secndEntity.Get<TeamComponent>();
 	if (!firstTeamComponent || !secndTeamComponent) return false;
 	return *firstTeamComponent != *secndTeamComponent;
 }
 
-bool Entities::IsAlive(Entity &entity) {
-	HealthComponent* healthComponent = entity.Get<HealthComponent>();
+bool Entities::IsAlive(Entity const& entity) {
+	HealthComponent const* healthComponent = entity.Get<HealthComponent>();
 	return (healthComponent && healthComponent->Alive());
 }
 
-bool Entities::IsAlive(gentity_t *ent) {
+bool Entities::IsAlive(gentity_t const*ent) {
 	if (!ent) return false;
 	return Entities::IsAlive(*ent->entity);
 }
 
-bool Entities::IsDead(Entity &entity) {
-	HealthComponent* healthComponent = entity.Get<HealthComponent>();
+bool Entities::IsDead(Entity const &entity) {
+	HealthComponent const* healthComponent = entity.Get<HealthComponent>();
 	return (healthComponent && !healthComponent->Alive());
 }
 
-bool Entities::IsDead(gentity_t *ent) {
+bool Entities::IsDead(gentity_t const *ent) {
 	if (!ent) return false;
 	return Entities::IsDead(*ent->entity);
 }
@@ -79,48 +79,49 @@ void Entities::Kill(gentity_t *ent, gentity_t *source, meansOfDeath_t meansOfDea
 	}
 }
 
-bool Entities::HasHealthComponent(gentity_t *ent) {
+bool Entities::HasHealthComponent(gentity_t const* ent) {
 	return (ent && HasComponents<HealthComponent>(*ent->entity));
 }
 
-float Entities::HealthOf(Entity& entity) {
-	HealthComponent *healthComponent = entity.Get<HealthComponent>();
+float Entities::HealthOf(Entity const& entity) {
+	HealthComponent const *healthComponent = entity.Get<HealthComponent>();
 	ASSERT_NQ(healthComponent, nullptr);
 	return healthComponent->Health();
 }
 
-float Entities::HealthOf(gentity_t* ent) {
+float Entities::HealthOf(gentity_t const* ent) {
 	return Entities::HealthOf(*ent->entity);
 }
 
-bool Entities::HasFullHealth(Entity& entity) {
-	HealthComponent *healthComponent = entity.Get<HealthComponent>();
+bool Entities::HasFullHealth(Entity const& entity) {
+	HealthComponent const*healthComponent = entity.Get<HealthComponent>();
 	ASSERT_NQ(healthComponent, nullptr);
 	return healthComponent->FullHealth();
 }
 
-bool Entities::HasFullHealth(gentity_t* ent) {
+bool Entities::HasFullHealth(gentity_t const* ent) {
 	return Entities::HasFullHealth(*ent->entity);
 }
 
-float Entities::HealthFraction(Entity& entity) {
-	HealthComponent *healthComponent = entity.Get<HealthComponent>();
+float Entities::HealthFraction(Entity const& entity) {
+	HealthComponent const *healthComponent = entity.Get<HealthComponent>();
 	ASSERT_NQ(healthComponent, nullptr);
 	return healthComponent->HealthFraction();
 }
 
-float Entities::HealthFraction(gentity_t* ent) {
+float Entities::HealthFraction(gentity_t const* ent) {
 	return Entities::HealthFraction(*ent->entity);
 }
 
 bool Entities::AntiHumanRadiusDamage(Entity& entity, float amount, float range, meansOfDeath_t mod) {
 	bool hit = false;
 
-	ForEntities<HumanClassComponent>([&] (Entity& other, HumanClassComponent& humanClassComponent) {
+	ForEntities<HumanClassComponent>([&] (Entity& other, HumanClassComponent&) {
 		// TODO: Add LocationComponent.
 		float distance = G_Distance(entity.oldEnt, other.oldEnt);
-		float damage   = amount * (1.0f - distance / range);
+		float damage   = amount * (1.0f - 0.7f * distance / range);
 
+		if (distance > range) return;
 		if (damage <= 0.0f) return;
 		if (!G_IsVisible(entity.oldEnt, other.oldEnt, MASK_SOLID)) return;
 
@@ -137,7 +138,8 @@ bool Entities::KnockbackRadiusDamage(Entity& entity, float amount, float range, 
 
 	// FIXME: Only considering entities with HealthComponent.
 	// TODO: Allow ForEntities to iterate over all entities.
-	ForEntities<HealthComponent>([&] (Entity& other, HealthComponent& healthComponent) {
+
+	ForEntities<HealthComponent>([&] (Entity& other, HealthComponent&) {
 		// TODO: Add LocationComponent.
 		float distance = G_Distance(entity.oldEnt, other.oldEnt);
 		float damage   = amount * (1.0f - distance / range);
@@ -145,7 +147,10 @@ bool Entities::KnockbackRadiusDamage(Entity& entity, float amount, float range, 
 		if (damage <= 0.0f) return;
 		if (!G_IsVisible(entity.oldEnt, other.oldEnt, MASK_SOLID)) return;
 
-		if (other.Damage(damage, entity.oldEnt, {}, {}, DAMAGE_NO_LOCDAMAGE | DAMAGE_KNOCKBACK, mod)) {
+		vec3_t knockbackDir;
+		VectorSubtract(other.oldEnt->s.origin, entity.oldEnt->s.origin, knockbackDir);
+
+		if (other.Damage(damage, entity.oldEnt, {}, Vec3::Load(knockbackDir), DAMAGE_NO_LOCDAMAGE | DAMAGE_KNOCKBACK, mod)) {
 			hit = true;
 		}
 	});

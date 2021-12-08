@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "cg_local.h"
 #include "cg_key_name.h"
+#include "shared/parse.h"
 
 cg_t            cg;
 cgs_t           cgs;
@@ -38,331 +39,138 @@ upgradeInfo_t   cg_upgrades[ 32 ];
 classInfo_t     cg_classes[ PCL_NUM_CLASSES ];
 buildableInfo_t cg_buildables[ BA_NUM_BUILDABLES ];
 
-vmCvar_t        cg_teslaTrailTime;
-vmCvar_t        cg_centertime;
-vmCvar_t        cg_runpitch;
-vmCvar_t        cg_runroll;
-vmCvar_t        cg_swingSpeed;
-vmCvar_t        cg_shadows;
-vmCvar_t        cg_playerShadows;
-vmCvar_t        cg_buildableShadows;
-vmCvar_t        cg_drawTimer;
-vmCvar_t        cg_drawClock;
-vmCvar_t        cg_drawFPS;
-vmCvar_t        cg_drawDemoState;
-vmCvar_t        cg_drawSnapshot;
-vmCvar_t        cg_drawChargeBar;
-vmCvar_t        cg_drawCrosshair;
-vmCvar_t        cg_drawCrosshairHit;
-vmCvar_t        cg_drawCrosshairFriendFoe;
-vmCvar_t        cg_drawCrosshairNames;
-vmCvar_t        cg_drawBuildableHealth;
-vmCvar_t        cg_drawMinimap;
-vmCvar_t        cg_minimapActive;
-vmCvar_t        cg_crosshairSize;
-vmCvar_t        cg_crosshairFile;
-vmCvar_t        cg_draw2D;
-vmCvar_t        cg_debugAnim;
-vmCvar_t        cg_debugPosition;
-vmCvar_t        cg_debugEvents;
-vmCvar_t        cg_errorDecay;
-vmCvar_t        cg_nopredict;
-vmCvar_t        cg_debugMove;
-vmCvar_t        cg_noPlayerAnims;
-vmCvar_t        cg_showmiss;
-vmCvar_t        cg_footsteps;
-vmCvar_t        cg_addMarks;
-vmCvar_t        cg_viewsize;
-vmCvar_t        cg_drawGun;
-vmCvar_t        cg_gun_frame;
-vmCvar_t        cg_gun_x;
-vmCvar_t        cg_gun_y;
-vmCvar_t        cg_gun_z;
-vmCvar_t        cg_mirrorgun;
-vmCvar_t        cg_tracerChance;
-vmCvar_t        cg_tracerWidth;
-vmCvar_t        cg_tracerLength;
-vmCvar_t        cg_thirdPerson;
-vmCvar_t        cg_thirdPersonAngle;
-vmCvar_t        cg_thirdPersonShoulderViewMode;
-vmCvar_t        cg_staticDeathCam;
-vmCvar_t        cg_thirdPersonPitchFollow;
-vmCvar_t        cg_thirdPersonRange;
-vmCvar_t        cg_lagometer;
-vmCvar_t        cg_drawSpeed;
-vmCvar_t        cg_maxSpeedTimeWindow;
-vmCvar_t        cg_stats;
-vmCvar_t        cg_blood;
-vmCvar_t        cg_teamChatsOnly;
-vmCvar_t        cg_drawTeamOverlay;
-vmCvar_t        cg_teamOverlaySortMode;
-vmCvar_t        cg_teamOverlayMaxPlayers;
-vmCvar_t        cg_teamOverlayUserinfo;
-vmCvar_t        cg_noVoiceChats;
-vmCvar_t        cg_noVoiceText;
-vmCvar_t        cg_hudFiles;
-vmCvar_t        cg_hudFilesEnable;
-vmCvar_t        cg_smoothClients;
-vmCvar_t        cg_timescaleFadeEnd;
-vmCvar_t        cg_timescaleFadeSpeed;
-vmCvar_t        cg_timescale;
-vmCvar_t        cg_noTaunt;
-vmCvar_t        cg_drawSurfNormal;
-vmCvar_t        cg_drawBBOX;
-vmCvar_t        cg_drawEntityInfo;
-vmCvar_t        cg_wwSmoothTime;
-vmCvar_t        cg_disableBlueprintErrors;
-vmCvar_t        cg_depthSortParticles;
-vmCvar_t        cg_bounceParticles;
-vmCvar_t        cg_consoleLatency;
-vmCvar_t        cg_lightFlare;
-vmCvar_t        cg_debugParticles;
-vmCvar_t        cg_debugTrails;
-vmCvar_t        cg_debugPVS;
-vmCvar_t        cg_disableWarningDialogs;
-vmCvar_t        cg_disableScannerPlane;
-vmCvar_t        cg_tutorial;
+Cvar::Cvar<int> cg_teslaTrailTime("cg_teslaTrailTime", "time (ms) to show reactor zap", Cvar::NONE, 250);
+Cvar::Cvar<float> cg_runpitch("cg_runpitch", "pitch angle change magnitude when running", Cvar::NONE, 0.002);
+Cvar::Cvar<float> cg_runroll("cg_runroll", "roll angle magnitude change when running", Cvar::NONE, 0.005);
+Cvar::Cvar<float> cg_swingSpeed("cg_swingSpeed", "something about view angles", Cvar::CHEAT, 0.3);
+Cvar::Range<Cvar::Cvar<int>> cg_shadows("cg_shadows", "type of shadows to draw", Cvar::LATCH, 1, 0, 6);
+Cvar::Cvar<bool> cg_playerShadows("cg_playerShadows", "draw shadows of players", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_buildableShadows("cg_buildableShadows", "draw shadows of buildables", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_drawTimer("cg_drawTimer", "show game time", Cvar::NONE, true);
+Cvar::Range<Cvar::Cvar<int>> cg_drawClock("cg_drawClock", "draw clock (1 = 12-hour 2 = 24-hour)", Cvar::NONE, 0, 0, 2);
+Cvar::Cvar<bool> cg_drawFPS("cg_drawFPS", "show client's frames per second", Cvar::NONE, true);
+Cvar::Range<Cvar::Cvar<int>> cg_drawCrosshair("cg_drawCrosshair", "draw crosshair (1 = ranged weapons, 2 = always)", Cvar::NONE, 2, 0, 2);
+Cvar::Cvar<bool> cg_drawCrosshairHit("cg_drawCrosshairHit", "show damage indicator", Cvar::NONE, true);
+Cvar::Range<Cvar::Cvar<int>> cg_drawCrosshairFriendFoe("cg_drawCrosshairFriendFoe", "change crosshair color over players (1 = ranged weapons 2 = all)", Cvar::NONE, 0, 0, 2);
+Cvar::Range<Cvar::Cvar<int>> cg_drawCrosshairNames("cg_drawCrosshairNames", "draw name of player under crosshair (2 = also client num)", Cvar::NONE, 1, 0, 2);
+Cvar::Cvar<bool> cg_drawBuildableHealth("cg_drawBuildableHealth", "show buildable health bar when builder", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_drawMinimap("cg_drawMinimap", "show minimap", Cvar::NONE, true);
+Cvar::Cvar<int> cg_minimapActive("cg_minimapActive", "FOR INTERNAL USE", Cvar::NONE, 0);
+Cvar::Cvar<float> cg_crosshairSize("cg_crosshairSize", "crosshair scale factor", Cvar::NONE, 1);
+Cvar::Cvar<std::string> cg_crosshairFile("cg_crosshairFile", "VFS path of custom crosshairs file", Cvar::NONE, "");
+Cvar::Cvar<bool> cg_draw2D("cg_draw2D", "show HUD / menus", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_debugAnim("cg_debuganim", "show animation debug logs", Cvar::CHEAT, false);
+Cvar::Cvar<bool> cg_debugEvents("cg_debugevents", "log received events", Cvar::CHEAT, false);
+Cvar::Cvar<float> cg_errorDecay("cg_errordecay", "recovery time after prediction error", Cvar::NONE, 100);
+Cvar::Cvar<bool> cg_nopredict("cg_nopredict", "disable client-side prediction", Cvar::NONE, false);
+Cvar::Cvar<int> cg_debugMove("cg_debugMove", "cgame pmove debug level", Cvar::NONE, 0);
+Cvar::Cvar<bool> cg_noPlayerAnims("cg_noplayeranims", "disable player animations", Cvar::CHEAT, false);
+Cvar::Cvar<bool> cg_showmiss("cg_showmiss", "log prediction errors", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_footsteps("cg_footsteps", "make footstep sounds", Cvar::CHEAT, true);
+Cvar::Cvar<bool> cg_addMarks("cg_marks", "enable marks (e.g. bullet holes)", Cvar::NONE, true);
+Cvar::Cvar<int> cg_viewsize("cg_viewsize", "size of rectangle the world is drawn in", Cvar::NONE, 100);
+Cvar::Range<Cvar::Cvar<int>> cg_drawGun("cg_drawGun", "draw 1st-person weapon (1 = guns, 2 = guns & claws)", Cvar::NONE, 1, 0, 2);
+Cvar::Cvar<float> cg_gun_x("cg_gunX", "model debugging: gun x offset", Cvar::CHEAT, 0);
+Cvar::Cvar<float> cg_gun_y("cg_gunY", "model debugging: gun y offset", Cvar::CHEAT, 0);
+Cvar::Cvar<float> cg_gun_z("cg_gunZ", "model debugging: gun z offset", Cvar::CHEAT, 0);
+Cvar::Cvar<bool> cg_mirrorgun("cg_mirrorgun", "use left-handed gun", Cvar::NONE, false);
+Cvar::Range<Cvar::Cvar<float>> cg_tracerChance("cg_tracerchance", "probability to draw line on bullet trajectory", Cvar::CHEAT, 1.0f, 0.0f, 1.0f);
+Cvar::Cvar<float> cg_tracerWidth("cg_tracerwidth", "width of line on bullet trajectory", Cvar::CHEAT, 3);
+Cvar::Cvar<float> cg_tracerLength("cg_tracerlength", "length of line drawn on bullet trajectory", Cvar::CHEAT, 200);
+Cvar::Cvar<bool> cg_thirdPerson("cg_thirdPerson", "show own player from 3rd-person perspective", Cvar::CHEAT, false);
+Cvar::Cvar<float> cg_thirdPersonAngle("cg_thirdPersonAngle", "yaw angle for 3rd-person view", Cvar::CHEAT, 0);
+Cvar::Range<Cvar::Cvar<int>> cg_thirdPersonShoulderViewMode("cg_thirdPersonShoulderViewMode", "alternative chase cam position", Cvar::NONE, 1, 1, 2);
+Cvar::Cvar<bool> cg_staticDeathCam("cg_staticDeathCam", "don't follow attacker movements after death", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_thirdPersonPitchFollow("cg_thirdPersonPitchFollow", "do follow the view pitch of the player you follow (disabled by default for comfort)", Cvar::NONE, false);
+Cvar::Cvar<float> cg_thirdPersonRange("cg_thirdPersonRange", "camera distance from 3rd-person player", Cvar::NONE, 75);
+Cvar::Cvar<bool> cg_lagometer("cg_lagometer", "show network latency meter", Cvar::NONE, false);
+Cvar::Range<Cvar::Cvar<int>> cg_drawSpeed("cg_drawSpeed", "show speed. bitflags: 0x1 number, 0x2 graph, 0x4 ignore z-component ", Cvar::NONE, 0, 0, 7);
+Cvar::Cvar<int> cg_maxSpeedTimeWindow("cg_maxSpeedTimeWindow", "cg_showSpeed's max speed is over last x milliseconds", Cvar::NONE, 2000);
+Cvar::Cvar<bool> cg_blood("com_blood", "draw blood effects", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_teamChatsOnly("cg_teamChatsOnly", "don't show chats to all players on screen", Cvar::NONE, false);
+Cvar::Range<Cvar::Cvar<int>> cg_teamOverlayUserinfo("teamoverlay", "request team overlay data from server", Cvar::USERINFO, 1, 0, 1);
+Cvar::Cvar<bool> cg_noVoiceChats("cg_noVoiceChats", "don't play vsays", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_noVoiceText("cg_noVoiceText", "don't show text for vsays", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_smoothClients("cg_smoothClients", "extrapolate entity positions", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_noTaunt("cg_noTaunt", "disable taunt sounds", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_drawSurfNormal("cg_drawSurfNormal", "visualize normal vector of facing surface", Cvar::CHEAT, false);
+Cvar::Range<Cvar::Cvar<int>> cg_drawBBOX("cg_drawBBOX", "show entity bounding boxes (2 = solid)", Cvar::CHEAT, 0, 0, 2);
+Cvar::Cvar<bool> cg_drawEntityInfo("cg_drawEntityInfo", "show number and type of facing entity", Cvar::CHEAT, false);
+Cvar::Cvar<int> cg_wwSmoothTime("cg_wwSmoothTime", "time (ms) to rotate view while wallwalking", Cvar::NONE, 150);
+Cvar::Cvar<bool> cg_depthSortParticles("cg_depthSortParticles", "render particles in depth order", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_bounceParticles("cg_bounceParticles", "particles may bounce off surfaces, rather than destruct", Cvar::NONE, true);
+Cvar::Cvar<int> cg_consoleLatency("cg_consoleLatency", "how long chat messages appear (milliseconds)", Cvar::NONE, 3000);
+Cvar::Range<Cvar::Cvar<int>> cg_lightFlare("cg_lightFlare", "style of 'light flares'", Cvar::NONE, 3, 0, 3);
+Cvar::Range<Cvar::Cvar<int>> cg_debugParticles("cg_debugParticles", "log level for particles", Cvar::CHEAT, 0, 0, 2);
+Cvar::Cvar<bool> cg_debugPVS("cg_debugPVS", "log entities in Potentially Visible Set", Cvar::CHEAT, false);
+Cvar::Range<Cvar::Cvar<int>> cg_disableWarningDialogs("cg_disableWarningDialogs", "gameplay warning style: 0 = center print, 1 = log, 2 = none", Cvar::NONE, 0, 0, 2);
+Cvar::Cvar<bool> cg_tutorial("cg_tutorial", "show tutorial text", Cvar::NONE, true);
 
-vmCvar_t        cg_rangeMarkerDrawSurface;
-vmCvar_t        cg_rangeMarkerDrawIntersection;
-vmCvar_t        cg_rangeMarkerDrawFrontline;
-vmCvar_t        cg_rangeMarkerSurfaceOpacity;
-vmCvar_t        cg_rangeMarkerLineOpacity;
-vmCvar_t        cg_rangeMarkerLineThickness;
-vmCvar_t        cg_rangeMarkerForBlueprint;
-vmCvar_t        cg_rangeMarkerBuildableTypes;
-vmCvar_t        cg_rangeMarkerWhenSpectating;
-vmCvar_t        cg_buildableRangeMarkerMask;
-vmCvar_t        cg_binaryShaderScreenScale;
+Cvar::Cvar<bool> cg_rangeMarkerDrawSurface("cg_rangeMarkerDrawSurface", "shade buildable range surfaces", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_rangeMarkerDrawIntersection("cg_rangeMarkerDrawIntersection", "outline insersections between buildable range surfaces", Cvar::NONE, false);
+Cvar::Cvar<bool> cg_rangeMarkerDrawFrontline("cg_rangeMarkerDrawFrontline", "outline edges of buildable range surfaces", Cvar::NONE, false);
+Cvar::Range<Cvar::Cvar<float>> cg_rangeMarkerSurfaceOpacity("cg_rangeMarkerSurfaceOpacity", "opacity of buildable range surfaces", Cvar::NONE, 0.08, 0, 1);
+Cvar::Range<Cvar::Cvar<float>> cg_rangeMarkerLineOpacity("cg_rangeMarkerLineOpacity", "opacity of buildable range outlines", Cvar::NONE, 0.4, 0, 1);
+Cvar::Cvar<float> cg_rangeMarkerLineThickness("cg_rangeMarkerLineThickness", "thickness of buildable range surface outlines", Cvar::NONE, 4.0);
+Cvar::Cvar<bool> cg_rangeMarkerForBlueprint("cg_rangeMarkerForBlueprint", "show range marker when placing buildable", Cvar::NONE, true);
+Cvar::Modified<Cvar::Cvar<std::string>> cg_rangeMarkerBuildableTypes("cg_rangeMarkerBuildableTypes", "list of buildables or buildable types to show range marker for", Cvar::NONE, "support");
+Cvar::Cvar<bool> cg_rangeMarkerWhenSpectating("cg_rangeMarkerWhenSpectating", "show buildable rangers while spectating", Cvar::NONE, false);
+int cg_buildableRangeMarkerMask;
+Cvar::Range<Cvar::Cvar<float>> cg_binaryShaderScreenScale("cg_binaryShaderScreenScale", "I don't know", Cvar::NONE, 1.0, 0, 1);
 
-vmCvar_t        cg_painBlendUpRate;
-vmCvar_t        cg_painBlendDownRate;
-vmCvar_t        cg_painBlendMax;
-vmCvar_t        cg_painBlendScale;
-vmCvar_t        cg_painBlendZoom;
+Cvar::Cvar<float> cg_painBlendUpRate("cg_painBlendUpRate", "how fast the pain indicator will appear", Cvar::NONE, 10.0);
+Cvar::Cvar<float> cg_painBlendDownRate("cg_painBlendDownRate", "how fast the pain indicator will disappear", Cvar::NONE, 0.5);
+Cvar::Cvar<float> cg_painBlendMax("cg_painBlendMax", "upper bound on how opaque the pain indicator will be", Cvar::NONE, 0.7);
+Cvar::Cvar<float> cg_painBlendScale("cg_painBlendScale", "how amplified the damage will be for the blood indicator (1->damage is barely visible, 20->damage reaches cg_painBlendMax almost instantly", Cvar::NONE, 7.0);
+Cvar::Cvar<float> cg_painBlendZoom("cg_painBlendZoom", "size scale factor for the the pain indicator", Cvar::NONE, 0.65);
 
-vmCvar_t        cg_stickySpec;
-vmCvar_t        cg_sprintToggle;
-vmCvar_t        cg_unlagged;
+Cvar::Range<Cvar::Cvar<int>> cg_stickySpec("cg_stickySpec", "if 0, cycle followed player upon death", Cvar::USERINFO, 1, 0, 1);
+Cvar::Range<Cvar::Cvar<int>> cg_sprintToggle("cg_sprintToggle", "toggle instead of hold to sprint", Cvar::USERINFO, 0, 0, 1);
+Cvar::Range<Cvar::Cvar<int>> cg_unlagged("cg_unlagged", "lag-compensate your player (if server allows)", Cvar::USERINFO, 1, 0, 1);
 
-vmCvar_t        cg_cmdGrenadeThrown;
-vmCvar_t        cg_cmdNeedHealth;
+Cvar::Cvar<std::string> cg_cmdGrenadeThrown("cg_cmdGrenadeThrown", "command executed upon throwing grenade", Cvar::NONE, "vsay_local grenade");
 
-vmCvar_t        cg_debugVoices;
+Cvar::Cvar<bool> cg_debugVoices("cg_debugVoices", "print cgame's list of vsays on startup", Cvar::NONE, false);
 
-vmCvar_t        ui_currentClass;
-vmCvar_t        ui_carriage;
-vmCvar_t        ui_dialog;
-vmCvar_t        ui_voteActive;
-vmCvar_t        ui_alienTeamVoteActive;
-vmCvar_t        ui_humanTeamVoteActive;
-vmCvar_t        ui_unlockables;
+Cvar::Cvar<bool> cg_optimizePrediction("cg_optimizePrediction", "client-side prediction is done incrementally", Cvar::NONE, true);
+Cvar::Cvar<bool> cg_projectileNudge("cg_projectileNudge", "enable client-side prediction for missiles", Cvar::NONE, true);
 
-vmCvar_t        cg_debugRandom;
+Cvar::Cvar<bool> cg_emoticonsInMessages("cg_emoticonsInMessages", "render emoticons in chat", Cvar::NONE, false);
 
-vmCvar_t        cg_optimizePrediction;
-vmCvar_t        cg_projectileNudge;
+Cvar::Cvar<bool> cg_chatTeamPrefix("cg_chatTeamPrefix", "show [H] or [A] before names in chat", Cvar::NONE, true);
 
-vmCvar_t        cg_voice;
+Cvar::Cvar<bool> cg_animSpeed("cg_animspeed", "run animations? (for debugging)", Cvar::CHEAT, true);
+Cvar::Cvar<float> cg_animBlend("cg_animblend", "I don't know", Cvar::NONE, 5.0);
 
-vmCvar_t        cg_emoticonsInMessages;
+Cvar::Cvar<float> cg_motionblur("cg_motionblur", "strength of motion blur", Cvar::NONE, 0.05);
+Cvar::Cvar<float> cg_motionblurMinSpeed("cg_motionblurMinSpeed", "minimum speed to trigger motion blur", Cvar::NONE, 600);
+Cvar::Cvar<bool> cg_spawnEffects("cg_spawnEffects", "desaturate world view when dead or spawning", Cvar::NONE, true);
 
-vmCvar_t        cg_chatTeamPrefix;
+// search 'fovCvar' to find usage of these (names come from config files)
+// 0 means use global FOV setting
+static Cvar::Cvar<float> cg_fov_builder("cg_fov_builder", "field of view (degrees) for Granger", Cvar::NONE, 0);
+static Cvar::Cvar<float> cg_fov_level0("cg_fov_level0", "field of view (degrees) for Dretch", Cvar::NONE, 0);
+static Cvar::Cvar<float> cg_fov_level1("cg_fov_level1", "field of view (degrees) for Mantis", Cvar::NONE, 0);
+static Cvar::Cvar<float> cg_fov_level2("cg_fov_level2", "field of view (degrees) for Marauder", Cvar::NONE, 0);
+static Cvar::Cvar<float> cg_fov_level3("cg_fov_level3", "field of view (degrees) for Dragoon", Cvar::NONE, 0);
+static Cvar::Cvar<float> cg_fov_level4("cg_fov_level4", "field of view (degrees) for Tyrant", Cvar::NONE, 0);
+static Cvar::Cvar<float> cg_fov_human("cg_fov_human", "field of view (degrees) for humans", Cvar::NONE, 0);
 
-vmCvar_t        cg_animSpeed;
-vmCvar_t        cg_animBlend;
+Cvar::Cvar<bool> ui_chatPromptColors("ui_chatPromptColors", "chat prompts (e.g. 'Say:') are color-coded", Cvar::NONE, true);
+Cvar::Cvar<std::string> cg_sayCommand("cg_sayCommand", "instead of talking, chat field does this command?", Cvar::NONE, "");
 
-vmCvar_t        cg_motionblur;
-vmCvar_t        cg_motionblurMinSpeed;
-vmCvar_t        cg_spawnEffects;
+// CHEAT because it could be abused to join the game faster and e.g. get on your preferred team
+// It's intended to aid developers who are frequently restarting the game.
+// In normal play, it would be undesirable as it causes lag when someone first uses a class.
+// TODO: only works for player models. Buildings and weapons are also relevant
+Cvar::Cvar<bool> cg_lazyLoadModels("cg_lazyLoadModels", "load models only when needed", Cvar::CHEAT, false);
 
-vmCvar_t        cg_fov_builder;
-vmCvar_t        cg_fov_level0;
-vmCvar_t        cg_fov_level1;
-vmCvar_t        cg_fov_level2;
-vmCvar_t        cg_fov_level3;
-vmCvar_t        cg_fov_level4;
-vmCvar_t        cg_fov_human;
-
-vmCvar_t        ui_chatPromptColors;
-vmCvar_t        cg_sayCommand;
-
-namespace {
-struct cvarTable_t
-{
-	vmCvar_t   *vmCvar;
-	const char *cvarName;
-	const char *defaultString;
-	int        cvarFlags;
-};
-} //namespace
-
-static const cvarTable_t cvarTable[] =
-{
-	{ &cg_drawGun,                     "cg_drawGun",                     "1",            0                            },
-	{ &cg_viewsize,                    "cg_viewsize",                    "100",          0                            },
-	{ &cg_shadows,                     "cg_shadows",                     "1",            CVAR_LATCH                   },
-	{ &cg_playerShadows,               "cg_playerShadows",               "1",            0                            },
-	{ &cg_buildableShadows,            "cg_buildableShadows",            "0",            0                            },
-	{ &cg_draw2D,                      "cg_draw2D",                      "1",            0                            },
-	{ &cg_drawTimer,                   "cg_drawTimer",                   "1",            0                            },
-	{ &cg_drawClock,                   "cg_drawClock",                   "0",            0                            },
-	{ &cg_drawFPS,                     "cg_drawFPS",                     "1",            0                            },
-	{ &cg_drawDemoState,               "cg_drawDemoState",               "1",            0                            },
-	{ &cg_drawSnapshot,                "cg_drawSnapshot",                "0",            0                            },
-	{ &cg_drawChargeBar,               "cg_drawChargeBar",               "1",            0                            },
-	{ &cg_drawCrosshair,               "cg_drawCrosshair",               "2",            0                            },
-	{ &cg_drawCrosshairHit,            "cg_drawCrosshairHit",            "1",            0                            },
-	{ &cg_drawCrosshairFriendFoe,      "cg_drawCrosshairFriendFoe",      "0",            0                            },
-	{ &cg_drawCrosshairNames,          "cg_drawCrosshairNames",          "1",            0                            },
-	{ &cg_drawBuildableHealth,         "cg_drawBuildableHealth",         "1",            0                            },
-	{ &cg_drawMinimap,                 "cg_drawMinimap",                 "1",            0                            },
-	{ &cg_minimapActive,               "cg_minimapActive",               "0",            0                            },
-	{ &cg_crosshairSize,               "cg_crosshairSize",               "1",            0                            },
-	{ &cg_crosshairFile,               "cg_crosshairFile",               "",             0                            },
-	{ &cg_addMarks,                    "cg_marks",                       "1",            0                            },
-	{ &cg_lagometer,                   "cg_lagometer",                   "0",            0                            },
-	{ &cg_drawSpeed,                   "cg_drawSpeed",                   "0",            0                            },
-	{ &cg_maxSpeedTimeWindow,          "cg_maxSpeedTimeWindow",          "2000",         0                            },
-	{ &cg_teslaTrailTime,              "cg_teslaTrailTime",              "250",          0                            },
-	{ &cg_gun_x,                       "cg_gunX",                        "0",            CVAR_CHEAT                   },
-	{ &cg_gun_y,                       "cg_gunY",                        "0",            CVAR_CHEAT                   },
-	{ &cg_gun_z,                       "cg_gunZ",                        "0",            CVAR_CHEAT                   },
-	{ &cg_mirrorgun,                   "cg_mirrorgun",                   "0",            0                            },
-	{ &cg_centertime,                  "cg_centertime",                  "3",            CVAR_CHEAT                   },
-	{ &cg_runpitch,                    "cg_runpitch",                    "0.002",        0                            },
-	{ &cg_runroll,                     "cg_runroll",                     "0.005",        0                            },
-	{ &cg_swingSpeed,                  "cg_swingSpeed",                  "0.3",          CVAR_CHEAT                   },
-	{ &cg_debugAnim,                   "cg_debuganim",                   "0",            CVAR_CHEAT                   },
-	{ &cg_debugPosition,               "cg_debugposition",               "0",            CVAR_CHEAT                   },
-	{ &cg_debugEvents,                 "cg_debugevents",                 "0",            CVAR_CHEAT                   },
-	{ &cg_errorDecay,                  "cg_errordecay",                  "100",          0                            },
-	{ &cg_nopredict,                   "cg_nopredict",                   "0",            0                            },
-	{ &cg_debugMove,                   "cg_debugMove",                   "0",            0                            },
-	{ &cg_noPlayerAnims,               "cg_noplayeranims",               "0",            CVAR_CHEAT                   },
-	{ &cg_showmiss,                    "cg_showmiss",                    "0",            0                            },
-	{ &cg_footsteps,                   "cg_footsteps",                   "1",            CVAR_CHEAT                   },
-	{ &cg_tracerChance,                "cg_tracerchance",                "1",            CVAR_CHEAT                   },
-	{ &cg_tracerWidth,                 "cg_tracerwidth",                 "3",            CVAR_CHEAT                   },
-	{ &cg_tracerLength,                "cg_tracerlength",                "200",          CVAR_CHEAT                   },
-	{ &cg_thirdPersonRange,            "cg_thirdPersonRange",            "75",           0                            },
-	{ &cg_thirdPerson,                 "cg_thirdPerson",                 "0",            CVAR_CHEAT                   },
-	{ &cg_thirdPersonAngle,            "cg_thirdPersonAngle",            "0",            CVAR_CHEAT                   },
-	{ &cg_thirdPersonPitchFollow,      "cg_thirdPersonPitchFollow",      "0",            0                            },
-	{ &cg_thirdPersonShoulderViewMode, "cg_thirdPersonShoulderViewMode", "1",            0                            },
-	{ &cg_staticDeathCam,              "cg_staticDeathCam",              "0",            0                            },
-	{ &cg_stats,                       "cg_stats",                       "0",            0                            },
-	{ &cg_drawTeamOverlay,             "cg_drawTeamOverlay",             "1",            0                            },
-	{ &cg_teamOverlaySortMode,         "cg_teamOverlaySortMode",         "1",            0                            },
-	{ &cg_teamOverlayMaxPlayers,       "cg_teamOverlayMaxPlayers",       "8",            0                            },
-	{ &cg_teamOverlayUserinfo,         "teamoverlay",                    "1",            CVAR_USERINFO                },
-	{ &cg_teamChatsOnly,               "cg_teamChatsOnly",               "0",            0                            },
-	{ &cg_noVoiceChats,                "cg_noVoiceChats",                "0",            0                            },
-	{ &cg_noVoiceText,                 "cg_noVoiceText",                 "0",            0                            },
-	{ &cg_drawSurfNormal,              "cg_drawSurfNormal",              "0",            CVAR_CHEAT                   },
-	{ &cg_drawBBOX,                    "cg_drawBBOX",                    "0",            CVAR_CHEAT                   },
-	{ &cg_drawEntityInfo,              "cg_drawEntityInfo",              "0",            CVAR_CHEAT                   },
-	{ &cg_wwSmoothTime,                "cg_wwSmoothTime",                "150",          0                            },
-	{ nullptr,                            "cg_wwFollow",                    "1",            CVAR_USERINFO                },
-	{ nullptr,                            "cg_wwToggle",                    "1",            CVAR_USERINFO                },
-	{ nullptr,                            "cg_disableBlueprintErrors",      "0",            CVAR_USERINFO                },
-	{ &cg_stickySpec,                  "cg_stickySpec",                  "1",            CVAR_USERINFO                },
-	{ &cg_sprintToggle,                "cg_sprintToggle",                "0",            CVAR_USERINFO                },
-	{ &cg_unlagged,                    "cg_unlagged",                    "1",            CVAR_USERINFO                },
-	{ nullptr,                            "cg_flySpeed",                    "800",          CVAR_USERINFO                },
-	{ &cg_depthSortParticles,          "cg_depthSortParticles",          "1",            0                            },
-	{ &cg_bounceParticles,             "cg_bounceParticles",             "1",            0                            },
-	{ &cg_consoleLatency,              "cg_consoleLatency",              "3000",         0                            },
-	{ &cg_lightFlare,                  "cg_lightFlare",                  "3",            0                            },
-	{ &cg_debugParticles,              "cg_debugParticles",              "0",            CVAR_CHEAT                   },
-	{ &cg_debugTrails,                 "cg_debugTrails",                 "0",            CVAR_CHEAT                   },
-	{ &cg_debugPVS,                    "cg_debugPVS",                    "0",            CVAR_CHEAT                   },
-	{ &cg_disableWarningDialogs,       "cg_disableWarningDialogs",       "0",            0                            },
-	{ &cg_disableScannerPlane,         "cg_disableScannerPlane",         "0",            0                            },
-	{ &cg_tutorial,                    "cg_tutorial",                    "1",            0                            },
-
-	{ &cg_rangeMarkerDrawSurface,      "cg_rangeMarkerDrawSurface",      "1",            0                            },
-	{ &cg_rangeMarkerDrawIntersection, "cg_rangeMarkerDrawIntersection", "0",            0                            },
-	{ &cg_rangeMarkerDrawFrontline,    "cg_rangeMarkerDrawFrontline",    "0",            0                            },
-	{ &cg_rangeMarkerSurfaceOpacity,   "cg_rangeMarkerSurfaceOpacity",   "0.08",         0                            },
-	{ &cg_rangeMarkerLineOpacity,      "cg_rangeMarkerLineOpacity",      "0.4",          0                            },
-	{ &cg_rangeMarkerLineThickness,    "cg_rangeMarkerLineThickness",    "4.0",          0                            },
-	{ &cg_rangeMarkerForBlueprint,     "cg_rangeMarkerForBlueprint",     "1",            0                            },
-	{ &cg_rangeMarkerBuildableTypes,   "cg_rangeMarkerBuildableTypes",   "support",      0                            },
-	{ &cg_rangeMarkerWhenSpectating,   "cg_rangeMarkerWhenSpectating",   "0",            0                            },
-	{ &cg_buildableRangeMarkerMask,    "cg_buildableRangeMarkerMask",    "",             0                            },
-	{ &cg_binaryShaderScreenScale,     "cg_binaryShaderScreenScale",     "1.0",          0                            },
-
-	{ &cg_painBlendUpRate,             "cg_painBlendUpRate",             "10.0",         0                            },
-	{ &cg_painBlendDownRate,           "cg_painBlendDownRate",           "0.5",          0                            },
-	{ &cg_painBlendMax,                "cg_painBlendMax",                "0.7",          0                            },
-	{ &cg_painBlendScale,              "cg_painBlendScale",              "7.0",          0                            },
-	{ &cg_painBlendZoom,               "cg_painBlendZoom",               "0.65",         0                            },
-
-	{ &cg_cmdGrenadeThrown,            "cg_cmdGrenadeThrown",            "vsay_local grenade", 0                      },
-	{ &cg_cmdNeedHealth,               "cg_cmdNeedHealth",               "vsay_local needhealth", 0                   },
-
-	{ &cg_debugVoices,                 "cg_debugVoices",                 "0",            0                            },
-
-	{ &cg_debugRandom,                 "cg_debugRandom",                 "0",            0                            },
-
-	{ &cg_optimizePrediction,          "cg_optimizePrediction",          "1",            0                            },
-	{ &cg_projectileNudge,             "cg_projectileNudge",             "1",            0                            },
-
-	// the following variables are created in other parts of the system,
-	// but we also reference them here
-
-	{ &cg_blood,                       "com_blood",                      "1",            0                            },
-	{ &cg_timescaleFadeEnd,            "cg_timescaleFadeEnd",            "1",            CVAR_CHEAT                   },
-	{ &cg_timescaleFadeSpeed,          "cg_timescaleFadeSpeed",          "0",            CVAR_CHEAT                   },
-	{ &cg_timescale,                   "timescale",                      "1",            0                            },
-	{ &cg_smoothClients,               "cg_smoothClients",               "0",            CVAR_USERINFO                },
-
-	{ &cg_noTaunt,                     "cg_noTaunt",                     "0",            0                            },
-
-	{ &cg_voice,                       "voice",                          "default",      CVAR_USERINFO                },
-
-	{ &cg_emoticonsInMessages,         "cg_emoticonsInMessages",         "0",            0                            },
-
-	{ &cg_animSpeed,                   "cg_animspeed",                   "1",            CVAR_CHEAT                   },
-	{ &cg_animBlend,                   "cg_animblend",                   "5.0",          0                            },
-
-	{ &cg_chatTeamPrefix,              "cg_chatTeamPrefix",              "1",            0                            },
-	{ &cg_motionblur,                  "cg_motionblur",                  "0.05",         0                            },
-	{ &cg_motionblurMinSpeed,          "cg_motionblurMinSpeed",          "600",          0                            },
-	{ &cg_spawnEffects,                "cg_spawnEffects",                "1",            0                            },
-	{ &cg_fov_builder,                 "cg_fov_builder",                 "0",            0                            },
-	{ &cg_fov_level0,                  "cg_fov_level0",                  "0",            0                            },
-	{ &cg_fov_level1,                  "cg_fov_level1",                  "0",            0                            },
-	{ &cg_fov_level2,                  "cg_fov_level2",                  "0",            0                            },
-	{ &cg_fov_level3,                  "cg_fov_level3",                  "0",            0                            },
-	{ &cg_fov_level4,                  "cg_fov_level4",                  "0",            0                            },
-	{ &cg_fov_human,                   "cg_fov_human",                   "0",            0                            },
-
-	{ &ui_chatPromptColors,            "ui_chatPromptColors",            "1",            0                            },
-
-	{ &cg_sayCommand,                  "cg_sayCommand",                   "",            0                            }
-};
-
-static const size_t cvarTableSize = ARRAY_LEN( cvarTable );
-
-/*
-=================
-CG_RegisterCvars
-=================
-*/
-void CG_RegisterCvars()
-{
-	size_t i;
-	const cvarTable_t *cv;
-
-	for ( i = 0, cv = cvarTable; i < cvarTableSize; i++, cv++ )
-	{
-		trap_Cvar_Register( cv->vmCvar, cv->cvarName,
-		                    cv->defaultString, cv->cvarFlags );
-	}
-}
-
+// USERINFO cvars - transmitted to the server
+static Cvar::Range<Cvar::Cvar<int>> cg_disableBlueprintErrors("cg_disableBlueprintErrors", "allow placement of some currently non-buildable structures", Cvar::USERINFO, 0, 0, 1);
+static Cvar::Cvar<int> cg_flySpeed("cg_flySpeed", "spectator movement speed", Cvar::USERINFO, 800);
+static Cvar::Cvar<std::string> cg_voice("voice", "track selection for user's own vsays", Cvar::USERINFO, "default");
+static Cvar::Range<Cvar::Cvar<int>> cg_wwFollow("cg_wwFollow", "rotate pitch angle when wallwalk normal changes", Cvar::USERINFO, 1, 0, 1);
+static Cvar::Range<Cvar::Cvar<int>> cg_wwToggle("cg_wwToggle", "wallwalk key is press-and-hold (0) or toggles (1)", Cvar::USERINFO, 1, 0, 1);
 
 /*
 ===============
@@ -456,141 +264,72 @@ static void CG_SetPVars()
 }
 
 /*
-===============
-CG_SetUIVars
-
-Set some cvars used by the UI
-these will change when following another player
-===============
-*/
-static void CG_SetUIVars()
-{
-	if ( !cg.snap )
-	{
-		return;
-	}
-
-	trap_Cvar_Set( "ui_carriage", va( "%d %d %d", cg.snap->ps.stats[ STAT_WEAPON ],
-	               cg.snap->ps.stats[ STAT_ITEMS ], cg.snap->ps.persistant[ PERS_CREDIT ] ) );
-}
-
-/*
 ================
 CG_UpdateBuildableRangeMarkerMask
 ================
 */
 void CG_UpdateBuildableRangeMarkerMask()
 {
-	static int btmc = 0;
-	static int spmc = 0;
+	constexpr int buildables_alien =
+		     ( 1 << BA_A_OVERMIND ) | ( 1 << BA_A_SPAWN ) |
+		     ( 1 << BA_A_ACIDTUBE ) | ( 1 << BA_A_TRAPPER ) |
+		     ( 1 << BA_A_HIVE ) | ( 1 << BA_A_LEECH ) |
+		     ( 1 << BA_A_BOOSTER ); // TODO: add spiker
 
-	if ( cg_rangeMarkerBuildableTypes.modificationCount != btmc ||
-	     cg_rangeMarkerWhenSpectating.modificationCount != spmc )
+	constexpr int buildables_human =
+		     ( 1 << BA_H_REACTOR ) | ( 1 << BA_H_MGTURRET ) |
+		     ( 1 << BA_H_ROCKETPOD ) | ( 1 << BA_H_DRILL );
+
+	constexpr int buildables_support =
+		     ( 1 << BA_A_OVERMIND ) | ( 1 << BA_A_SPAWN ) |
+		     ( 1 << BA_A_LEECH ) | ( 1 << BA_A_BOOSTER ) |
+		     ( 1 << BA_H_REACTOR ) | ( 1 << BA_H_DRILL );
+
+	constexpr int buildables_offensive =
+		     ( 1 << BA_A_ACIDTUBE ) | ( 1 << BA_A_TRAPPER ) |
+		     ( 1 << BA_A_HIVE ) | ( 1 << BA_H_MGTURRET ) |
+		     ( 1 << BA_H_ROCKETPOD ); // TODO: add spiker
+
+	static_assert( (buildables_alien | buildables_human) == (buildables_support | buildables_offensive), "you probably forgot to add a buildable in either list" );
+	static_assert( (buildables_alien & buildables_human) == 0, "buildable can't be both human and alien" );
+	static_assert( (buildables_support & buildables_offensive) == 0, "buildables are likely not supposed to be both offensive and defensive" ); // optional
+
+	constexpr struct { const char *key; int buildableMask; } mappings[] = {
+		{ "all",            buildables_alien | buildables_human     },
+		{ "alien",          buildables_alien                        },
+		{ "human",          buildables_human                        },
+		{ "support",        buildables_support                      },
+		{ "aliensupport",   buildables_alien & buildables_support   },
+		{ "humansupport",   buildables_human & buildables_support   },
+		{ "offensive",      buildables_offensive                    },
+		{ "alienoffensive", buildables_alien & buildables_offensive },
+		{ "humanoffensive", buildables_human & buildables_offensive },
+		{ "none",           0                                       },
+	};
+
+	if ( Util::optional<std::string> structureList = cg_rangeMarkerBuildableTypes.GetModifiedValue() )
 	{
-		int         brmMask;
-		char        buffer[ MAX_CVAR_VALUE_STRING ];
-		char        *p, *q;
-		buildable_t buildable;
+		int brmMask = 0;
 
-		brmMask = cg_rangeMarkerWhenSpectating.integer ? ( 1 << BA_NONE ) : 0;
-
-		if ( !cg_rangeMarkerBuildableTypes.string[ 0 ] )
+		for (Parse_WordListSplitter marker(*std::move(structureList)); *marker; ++marker)
 		{
-			goto empty;
-		}
-
-		Q_strncpyz( buffer, cg_rangeMarkerBuildableTypes.string, sizeof( buffer ) );
-		p = &buffer[ 0 ];
-
-		for ( ;; )
-		{
-			q = strchr( p, ',' );
-
-			if ( q )
-			{
-				*q = '\0';
-			}
-
-			while ( *p == ' ' )
-			{
-				++p;
-			}
-
-			buildable = BG_BuildableByName( p )->number;
+			buildable_t buildable = BG_BuildableByName( *marker )->number;
 
 			if ( buildable != BA_NONE )
 			{
+				// add it to list
 				brmMask |= 1 << buildable;
 			}
-			else if ( !Q_stricmp( p, "all" ) )
-			{
-				brmMask |= ( 1 << BA_A_OVERMIND ) | ( 1 << BA_A_SPAWN ) | ( 1 << BA_A_ACIDTUBE ) |
-				           ( 1 << BA_A_TRAPPER ) | ( 1 << BA_A_HIVE ) | ( 1 << BA_A_LEECH ) |
-				           ( 1 << BA_A_BOOSTER ) | ( 1 << BA_H_REACTOR ) | ( 1 << BA_H_MGTURRET ) |
-				           ( 1 << BA_H_ROCKETPOD ) | ( 1 << BA_H_DRILL );
-			}
-			else if ( !Q_stricmp( p, "none" ) )
-			{
-				brmMask = 0;
-			}
 			else
 			{
-				char *pp;
-				int  only;
-
-				if ( !Q_strnicmp( p, "alien", 5 ) )
-				{
-					pp = p + 5;
-					only = ( 1 << BA_A_OVERMIND ) | ( 1 << BA_A_SPAWN ) |
-					       ( 1 << BA_A_ACIDTUBE ) | ( 1 << BA_A_TRAPPER ) | ( 1 << BA_A_HIVE ) | ( 1 << BA_A_LEECH ) | ( 1 << BA_A_BOOSTER );
+				for (auto map : mappings) {
+					if ( Q_stricmp(map.key, *marker) == 0 ) {
+						brmMask |= map.buildableMask;
+					}
 				}
-				else if ( !Q_strnicmp( p, "human", 5 ) )
-				{
-					pp = p + 5;
-					only = ( 1 << BA_H_REACTOR ) | ( 1 << BA_H_MGTURRET ) | ( 1 << BA_H_ROCKETPOD ) |
-					       ( 1 << BA_H_DRILL );
-				}
-				else
-				{
-					pp = p;
-					only = ~0;
-				}
-
-				if ( pp != p && !*pp )
-				{
-					brmMask |= only;
-				}
-				else if ( !Q_stricmp( pp, "support" ) )
-				{
-					brmMask |= only & ( ( 1 << BA_A_OVERMIND ) | ( 1 << BA_A_SPAWN ) | ( 1 << BA_A_LEECH ) | ( 1 << BA_A_BOOSTER ) |
-					                    ( 1 << BA_H_REACTOR ) |  ( 1 << BA_H_DRILL ) );
-				}
-				else if ( !Q_stricmp( pp, "offensive" ) )
-				{
-					brmMask |= only & ( ( 1 << BA_A_ACIDTUBE ) | ( 1 << BA_A_TRAPPER ) | ( 1 << BA_A_HIVE ) |
-					                    ( 1 << BA_H_MGTURRET ) | ( 1 << BA_H_ROCKETPOD ) );
-				}
-				else
-				{
-					Log::Warn( "unknown buildable or group: %s", p );
-				}
-			}
-
-			if ( q )
-			{
-				p = q + 1;
-			}
-			else
-			{
-				break;
 			}
 		}
-
-empty:
-		trap_Cvar_Set( "cg_buildableRangeMarkerMask", va( "%i", brmMask ) );
-
-		btmc = cg_rangeMarkerBuildableTypes.modificationCount;
-		spmc = cg_rangeMarkerWhenSpectating.modificationCount;
+		cg_buildableRangeMarkerMask = brmMask;
 	}
 }
 
@@ -633,31 +372,8 @@ CG_UpdateCvars
 */
 void CG_UpdateCvars()
 {
-	size_t i;
-	const cvarTable_t *cv;
-
-	for ( i = 0, cv = cvarTable; i < cvarTableSize; i++, cv++ )
-	{
-		if ( cv->vmCvar )
-		{
-			trap_Cvar_Update( cv->vmCvar );
-		}
-	}
-
-	// check for modifications here
 	CG_SetPVars();
-	CG_SetUIVars();
 	CG_UpdateBuildableRangeMarkerMask();
-}
-
-int CG_CrosshairPlayer()
-{
-	if ( cg.time > ( cg.crosshairClientTime + 1000 ) )
-	{
-		return -1;
-	}
-
-	return cg.crosshairClientNum;
 }
 
 /*
@@ -734,6 +450,30 @@ bool CG_FileExists( const char *filename )
 	return trap_FS_FOpenFile( filename, nullptr, fsMode_t::FS_READ );
 }
 
+static void CG_UpdateMediaFraction( float fraction )
+{
+	cg.mediaLoadingFraction = fraction;
+	trap_UpdateScreen();
+}
+
+enum cgLoadingStep_t {
+	LOAD_START = 0,
+	LOAD_TRAILS,
+	LOAD_PARTICLES,
+	LOAD_CONFIGS,
+	LOAD_SOUNDS,
+	LOAD_GEOMETRY,
+	LOAD_ASSETS,
+	LOAD_WEAPONS,
+	LOAD_UPGRADES,
+	LOAD_CLASSES,
+	LOAD_BUILDINGS,
+	LOAD_CLIENTS,
+	LOAD_HUDS,
+	LOAD_GLSL,
+	LOAD_DONE
+};
+
 /*
 ======================
 CG_UpdateLoadingProgress
@@ -741,122 +481,80 @@ CG_UpdateLoadingProgress
 ======================
 */
 
-enum loadingBar_t {
-	LOADBAR_MEDIA,
-	LOADBAR_CHARACTER_MODELS,
-	LOADBAR_BUILDABLES
-};
-
-static void CG_UpdateLoadingProgress( loadingBar_t progressBar, float progress, const char *label )
+static void CG_UpdateLoadingProgress( int step, const char *label, const char* loadingText )
 {
-	if(!cg.loading)
-		return;
+	cg.loadingFraction = ( 1.0f * step ) / LOAD_DONE;
 
-	switch (progressBar) {
-		case LOADBAR_MEDIA:
-			cg.mediaFraction = progress;
-			break;
-		case LOADBAR_CHARACTER_MODELS:
-			cg.charModelFraction = progress;
-			break;
-		case LOADBAR_BUILDABLES:
-			cg.buildablesFraction = progress;
-			break;
-		default:
-			break;
+	Q_strncpyz( cg.loadingText, loadingText, sizeof( cg.loadingText ) );
+
+	Log::Debug( "CG_Init: %d%% %s.", static_cast<int>( 100 * cg.loadingFraction ), label );
+
+	if( cg.loading )
+	{
+		trap_UpdateScreen();
 	}
-
-	Q_strncpyz(cg.currentLoadingLabel, label, sizeof( cg.currentLoadingLabel ) );
-
-	trap_UpdateScreen();
 }
-
-static void CG_UpdateMediaFraction( float newFract )
-{
-	cg.mediaFraction = newFract;
-	trap_UpdateScreen();
-}
-
-enum {
-	LOAD_START = 1,
-	LOAD_TRAILS,
-	LOAD_PARTICLES,
-	LOAD_SOUNDS,
-	LOAD_GEOMETRY,
-	LOAD_ASSETS,
-	LOAD_CONFIGS,
-	LOAD_WEAPONS,
-	LOAD_UPGRADES,
-	LOAD_CLASSES,
-	LOAD_BUILDINGS,
-	LOAD_REMAINING,
-	LOAD_DONE
-} typedef cgLoadingStep_t;
 
 static void CG_UpdateLoadingStep( cgLoadingStep_t step )
 {
-#if 0
-	static int startTime = 0;
-	static int lastStepTime = 0;
-	const int thisStepTime = trap_Milliseconds();
-
 	switch (step) {
 		case LOAD_START:
-			startTime = thisStepTime;
-			Log::Notice("^4%%^5 Start loading.");
-			break;
-		case LOAD_DONE:
-			Log::Notice("^4%%^5 Done loading everything after %is (%ims).",
-					(thisStepTime - startTime)/1000, (thisStepTime - startTime));
-			break;
-		default:
-			Log::Notice("^4%%^5 Done with Step %i after %is (%ims)… Starting Step %i",
-					step - 1, (thisStepTime - lastStepTime)/1000, (thisStepTime - lastStepTime), step );
-			break;
-	}
-	lastStepTime = thisStepTime;
-#endif
-
-	switch (step) {
-		case LOAD_START:
+			/* Note: this is too early to do screen updates,
+			so set cg.loading to true after printing the log. */
+			CG_UpdateLoadingProgress( step, "Start", choose(_("Calling home…"), _("Sending to the front…"), nullptr) );
 			cg.loading = true;
-			cg.mediaFraction = cg.charModelFraction = cg.buildablesFraction = 0.0f;
 			break;
 
 		case LOAD_TRAILS:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.0f, choose("Tracking your movements", "Letting out the magic smoke", nullptr) );
+			CG_UpdateLoadingProgress( step, "Trails", choose(_("Tracking your movements…"), _("Letting out the magic smoke…"), nullptr) );
 			break;
+
 		case LOAD_PARTICLES:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.05f, choose("Collecting bees for the hives", "Initialising fireworks", "Causing electrical faults", nullptr) );
+			CG_UpdateLoadingProgress( step, "Particles", choose(_("Collecting bees for the hives…"), _("Initialising fireworks…"), _("Causing electrical faults…"), nullptr) );
 			break;
-		case LOAD_SOUNDS:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.08f, choose("Recording granger purring", "Generating annoying noises", nullptr) );
-			break;
-		case LOAD_GEOMETRY:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.60f, choose("Hello World!", "Making a scene.", nullptr) );
-			break;
-		case LOAD_ASSETS:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.63f, choose("Taking pictures of the world", "Using your laptop's camera", "Adding texture to concrete", "Drawing smiley faces", nullptr) );
-			break;
+
 		case LOAD_CONFIGS:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.80f, choose("Reading the manual", "Looking at blueprints", nullptr) );
+			CG_UpdateLoadingProgress( step, "Configurations", choose(_("Reading the manual…"), _("Looking at blueprints…"), nullptr) );
 			break;
+
+		case LOAD_SOUNDS:
+			CG_UpdateLoadingProgress( step, "Sounds", choose(_("Generating annoying noises…"), _("Recording granger purring…"), nullptr) );
+			break;
+
+		case LOAD_GEOMETRY:
+			CG_UpdateLoadingProgress( step, "Geometry", choose(_("Hello World!"), _("Making a scene…"), nullptr) );
+			break;
+
+		case LOAD_ASSETS:
+			CG_UpdateLoadingProgress( step, "Assets", choose(_("Taking pictures of the world…"), _("Drawing smiley faces…"), nullptr) );
+			break;
+
 		case LOAD_WEAPONS:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.90f, choose("Setting up the armoury", "Sharpening the aliens' claws", "Overloading lucifer cannons", nullptr) );
+			CG_UpdateLoadingProgress( step, "Weapons", choose(_("Sharpening the aliens' claws…"), _("Overloading lucifer cannons…"), nullptr) );
 			break;
+
 		case LOAD_UPGRADES:
-		case LOAD_CLASSES:
-			CG_UpdateLoadingProgress( LOADBAR_MEDIA, 0.95f, choose("Charging battery packs", "Replicating alien DNA", "Packing tents for jetcampers", nullptr) );
+			CG_UpdateLoadingProgress( step, "Upgrades", choose(_("Unwrapping jetpacks…"), _("Spinning silk for reticles…"), nullptr) );
 			break;
+
 		case LOAD_BUILDINGS:
-			cg.mediaFraction = 1.0f;
-			CG_UpdateLoadingProgress( LOADBAR_BUILDABLES, 0.0f, choose("Finishing construction", "Adding turret spam", "Awakening the overmind", nullptr) );
+			CG_UpdateLoadingProgress( step, "Buildings", choose(_("Adding turret spam…"), _("Awakening the overmind…"), nullptr) );
+			break;
+
+		case LOAD_CLIENTS:
+			CG_UpdateLoadingProgress( step, "Clients", choose(_("Teleporting soldiers…"), _("Replicating alien DNA…"), nullptr) );
+			break;
+
+		case LOAD_HUDS:
+		CG_UpdateLoadingProgress( step, "Huds", choose(_("Customizing helmets…"), nullptr) );
+			break;
+
+		case LOAD_GLSL:
+			CG_UpdateLoadingProgress( step, "GLSL shaders", choose(_("Compiling GLSL shaders (please be patient)…"), nullptr) );
 			break;
 
 		case LOAD_DONE:
-			cg.mediaFraction = cg.charModelFraction = cg.buildablesFraction = 1.0f;
-			Q_strncpyz(cg.currentLoadingLabel, "Done!", sizeof( cg.currentLoadingLabel ) );
-			trap_UpdateScreen();
+			CG_UpdateLoadingProgress( step, "Done", _("Done!") );
 			cg.loading = false;
 			break;
 
@@ -966,7 +664,7 @@ static void CG_RegisterSounds()
 	cgs.media.lCannonWarningSound = trap_S_RegisterSound( "models/weapons/lcannon/warning", false );
 	cgs.media.lCannonWarningSound2 = trap_S_RegisterSound( "models/weapons/lcannon/warning2", false );
 
-	cgs.media.rocketpodLockonSound = trap_S_RegisterSound( "sound/rocketpod/lockon", false );
+	cgs.media.rocketpodLockonSound = trap_S_RegisterSound( "sound/buildables/rocketpod/lockon", false );
 
 	cgs.media.timerBeaconExpiredSound = trap_S_RegisterSound( "sound/feedback/beacons/timer-expired", false );
 	cgs.media.killSound = trap_S_RegisterSound( "sound/feedback/damage/bell", false );
@@ -1067,89 +765,65 @@ static void CG_RegisterGraphics()
 	trap_R_LoadWorldMap( va( "maps/%s.bsp", cgs.mapname ) );
 
 	CG_UpdateLoadingStep( LOAD_ASSETS );
+
 	for ( i = 0; i < 11; i++ )
 	{
-		cgs.media.numberShaders[ i ] = trap_R_RegisterShader(sb_nums[i],
-								     (RegisterShaderFlags_t) RSF_DEFAULT);
+		cgs.media.numberShaders[ i ] = trap_R_RegisterShader(sb_nums[i], (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 	}
 
-	cgs.media.viewBloodShader = trap_R_RegisterShader("gfx/feedback/painblend",
-							  (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.viewBloodShader = trap_R_RegisterShader("gfx/feedback/painblend", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	cgs.media.connectionShader = trap_R_RegisterShader("gfx/feedback/net",
-							   (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.connectionShader = trap_R_RegisterShader("gfx/feedback/net", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	cgs.media.creepShader = trap_R_RegisterShader("gfx/buildables/creep/creep", (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.creepShader = trap_R_RegisterShader("gfx/buildables/creep/creep", RSF_DEFAULT );
 
-	cgs.media.scannerBlipShader = trap_R_RegisterShader("gfx/feedback/scanner/blip",
-							    (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.scannerBlipShader = trap_R_RegisterShader("gfx/feedback/scanner/blip", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	cgs.media.scannerBlipBldgShader = trap_R_RegisterShader("gfx/feedback/scanner/blip_bldg",
-								(RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.scannerBlipBldgShader = trap_R_RegisterShader("gfx/feedback/scanner/blip_bldg", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	cgs.media.scannerLineShader = trap_R_RegisterShader("gfx/feedback/scanner/stalk",
-							    (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.scannerLineShader = trap_R_RegisterShader("gfx/feedback/scanner/stalk", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	cgs.media.tracerShader = trap_R_RegisterShader("gfx/weapons/tracer/tracer",
-						       (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.tracerShader = trap_R_RegisterShader("gfx/weapons/tracer/tracer", RSF_NOMIP);
 
-	cgs.media.backTileShader = trap_R_RegisterShader("gfx/colors/backtile",
-							 (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.backTileShader = trap_R_RegisterShader("gfx/colors/backtile", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
 	// building shaders
-	cgs.media.greenBuildShader = trap_R_RegisterShader("gfx/buildables/common/greenbuild",
-							   (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.redBuildShader = trap_R_RegisterShader("gfx/buildables/common/redbuild",
-							 (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.humanSpawningShader = trap_R_RegisterShader("gfx/buildables/human_base/spawning",
-							      (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.greenBuildShader = trap_R_RegisterShader("gfx/buildables/common/greenbuild", RSF_DEFAULT );
+	cgs.media.yellowBuildShader = trap_R_RegisterShader("gfx/buildables/common/yellowbuild", RSF_DEFAULT );
+	cgs.media.redBuildShader = trap_R_RegisterShader("gfx/buildables/common/redbuild", RSF_DEFAULT );
+	cgs.media.humanSpawningShader = trap_R_RegisterShader("gfx/buildables/human_base/spawning", RSF_DEFAULT );
 
 	for ( i = 0; i < 8; i++ )
 	{
-		cgs.media.buildWeaponTimerPie[ i ] = trap_R_RegisterShader(buildWeaponTimerPieShaders[i],
-									   (RegisterShaderFlags_t) RSF_DEFAULT);
+		cgs.media.buildWeaponTimerPie[ i ] = trap_R_RegisterShader(buildWeaponTimerPieShaders[i], RSF_NOMIP);
 	}
 
 	// player health cross shaders
-	cgs.media.healthCross = trap_R_RegisterShader("ui/assets/neutral/cross",
-						      (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.healthCross2X = trap_R_RegisterShader("ui/assets/neutral/cross2",
-							(RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.healthCross3X = trap_R_RegisterShader("ui/assets/neutral/cross3",
-							(RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.healthCrossMedkit = trap_R_RegisterShader("ui/assets/neutral/cross_medkit",
-							    (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.healthCrossPoisoned = trap_R_RegisterShader("ui/assets/neutral/cross_poison",
-							      (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.healthCross = trap_R_RegisterShader("ui/assets/neutral/cross", RSF_NOMIP);
+	cgs.media.healthCross2X = trap_R_RegisterShader("ui/assets/neutral/cross2", RSF_NOMIP);
+	cgs.media.healthCross3X = trap_R_RegisterShader("ui/assets/neutral/cross3", RSF_NOMIP);
+	cgs.media.healthCross4X = trap_R_RegisterShader("ui/assets/neutral/cross4", RSF_NOMIP);
+	cgs.media.healthCrossMedkit = trap_R_RegisterShader("ui/assets/neutral/cross_medkit", RSF_NOMIP);
+	cgs.media.healthCrossPoisoned = trap_R_RegisterShader("ui/assets/neutral/cross_poison", RSF_NOMIP);
 
-	cgs.media.desaturatedCgrade = trap_R_RegisterShader("gfx/cgrading/desaturated",
-								 (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
+	cgs.media.desaturatedCgrade = trap_R_RegisterShader("gfx/cgrading/desaturated", (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
+	cgs.media.neutralCgrade = trap_R_RegisterShader("gfx/cgrading/neutral", (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
+	cgs.media.redCgrade = trap_R_RegisterShader("gfx/cgrading/red-only", (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
+	cgs.media.tealCgrade = trap_R_RegisterShader("gfx/cgrading/teal-only", (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
 
-	cgs.media.neutralCgrade = trap_R_RegisterShader("gfx/cgrading/neutral",
-								 (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
-
-	cgs.media.redCgrade = trap_R_RegisterShader("gfx/cgrading/red-only",
-								 (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
-
-	cgs.media.tealCgrade = trap_R_RegisterShader("gfx/cgrading/teal-only",
-								 (RegisterShaderFlags_t) ( RSF_NOMIP | RSF_NOLIGHTSCALE ) );
-
-	cgs.media.balloonShader = trap_R_RegisterShader("gfx/feedback/chatballoon",
-							(RegisterShaderFlags_t) RSF_SPRITE);
+	cgs.media.balloonShader = trap_R_RegisterShader("gfx/feedback/chatballoon", (RegisterShaderFlags_t) ( RSF_SPRITE | RSF_NOMIP ) );
 
 	cgs.media.disconnectPS = CG_RegisterParticleSystem( "particles/feedback/disconnect" );
 
-	cgs.media.scopeShader = trap_R_RegisterShader( "gfx/weapons/scope", (RegisterShaderFlags_t) ( RSF_DEFAULT | RSF_NOMIP ) );
+	cgs.media.scopeShader = trap_R_RegisterShader( "gfx/weapons/scope", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	CG_UpdateMediaFraction( 0.7f );
+	CG_UpdateMediaFraction( 0.2f );
 
 	memset( cg_weapons, 0, sizeof( cg_weapons ) );
 	memset( cg_upgrades, 0, sizeof( cg_upgrades ) );
 
-	cgs.media.shadowMarkShader = trap_R_RegisterShader("gfx/players/common/shadow",
-							   (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.wakeMarkShader = trap_R_RegisterShader("gfx/players/common/wake",
-							 (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.shadowMarkShader = trap_R_RegisterShader("gfx/players/common/shadow", RSF_DEFAULT);
+	cgs.media.wakeMarkShader = trap_R_RegisterShader("gfx/players/common/wake", RSF_DEFAULT);
 
 	cgs.media.alienEvolvePS = CG_RegisterParticleSystem( "particles/players/alien_base/evolve" );
 	cgs.media.alienAcidTubePS = CG_RegisterParticleSystem( "particles/buildables/acide_tube/spore" );
@@ -1176,35 +850,27 @@ static void CG_RegisterGraphics()
 	cgs.media.sphericalCone64Model = trap_R_RegisterModel( "models/generic/sphericalCone64.md3" );
 	cgs.media.sphericalCone240Model = trap_R_RegisterModel( "models/generic/sphericalCone240.md3" );
 
-	cgs.media.plainColorShader = trap_R_RegisterShader("gfx/colors/plain",
-							   (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.binaryAlpha1Shader = trap_R_RegisterShader("gfx/binary/alpha1",
-							     (RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.plainColorShader = trap_R_RegisterShader("gfx/colors/plain", RSF_DEFAULT);
+	cgs.media.binaryAlpha1Shader = trap_R_RegisterShader("gfx/binary/alpha1", RSF_DEFAULT);
 
 	for ( i = 0; i < NUM_BINARY_SHADERS; ++i )
 	{
-		cgs.media.binaryShaders[ i ].f1 = trap_R_RegisterShader(va("gfx/binary/%03i_F1", i),
-									(RegisterShaderFlags_t) RSF_DEFAULT);
-		cgs.media.binaryShaders[ i ].f2 = trap_R_RegisterShader(va("gfx/binary/%03i_F2", i),
-									(RegisterShaderFlags_t) RSF_DEFAULT);
-		cgs.media.binaryShaders[ i ].f3 = trap_R_RegisterShader(va("gfx/binary/%03i_F3", i),
-									(RegisterShaderFlags_t) RSF_DEFAULT);
-		cgs.media.binaryShaders[ i ].b1 = trap_R_RegisterShader(va("gfx/binary/%03i_B1", i),
-									(RegisterShaderFlags_t) RSF_DEFAULT);
-		cgs.media.binaryShaders[ i ].b2 = trap_R_RegisterShader(va("gfx/binary/%03i_B2", i),
-									(RegisterShaderFlags_t) RSF_DEFAULT);
-		cgs.media.binaryShaders[ i ].b3 = trap_R_RegisterShader(va("gfx/binary/%03i_B3", i),
-									(RegisterShaderFlags_t) RSF_DEFAULT);
+		cgs.media.binaryShaders[ i ].f1 = trap_R_RegisterShader(va("gfx/binary/%03i_F1", i), RSF_DEFAULT);
+		cgs.media.binaryShaders[ i ].f2 = trap_R_RegisterShader(va("gfx/binary/%03i_F2", i), RSF_DEFAULT);
+		cgs.media.binaryShaders[ i ].f3 = trap_R_RegisterShader(va("gfx/binary/%03i_F3", i), RSF_DEFAULT);
+		cgs.media.binaryShaders[ i ].b1 = trap_R_RegisterShader(va("gfx/binary/%03i_B1", i), RSF_DEFAULT);
+		cgs.media.binaryShaders[ i ].b2 = trap_R_RegisterShader(va("gfx/binary/%03i_B2", i), RSF_DEFAULT);
+		cgs.media.binaryShaders[ i ].b3 = trap_R_RegisterShader(va("gfx/binary/%03i_B3", i), RSF_DEFAULT);
 	}
 
 	CG_BuildableStatusParse( "ui/assets/human/buildstat.cfg", &cgs.humanBuildStat );
 	CG_BuildableStatusParse( "ui/assets/alien/buildstat.cfg", &cgs.alienBuildStat );
 
-	cgs.media.beaconIconArrow = trap_R_RegisterShader( "gfx/feedback/beacons/arrow", RSF_DEFAULT );
-	cgs.media.beaconNoTarget = trap_R_RegisterShader( "gfx/feedback/beacons/no-target", RSF_DEFAULT );
-	cgs.media.beaconTagScore = trap_R_RegisterShader( "gfx/feedback/beacons/tagscore", RSF_DEFAULT );
+	cgs.media.beaconIconArrow = trap_R_RegisterShader( "gfx/feedback/beacons/arrow", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
+	cgs.media.beaconNoTarget = trap_R_RegisterShader( "gfx/feedback/beacons/no-target", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
+	cgs.media.beaconTagScore = trap_R_RegisterShader( "gfx/feedback/beacons/tagscore", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
-	cgs.media.damageIndicatorFont = trap_R_RegisterShader( "gfx/feedback/damage/font", RSF_DEFAULT );
+	cgs.media.damageIndicatorFont = trap_R_RegisterShader( "gfx/feedback/damage/font", (RegisterShaderFlags_t) ( RSF_NOMIP ) );
 
 	// register the inline models
 	cgs.numInlineModels = trap_CM_NumInlineModels();
@@ -1246,7 +912,7 @@ static void CG_RegisterGraphics()
 		cgs.gameModels[ i ] = trap_R_RegisterModel( modelName );
 	}
 
-	CG_UpdateMediaFraction( 0.75f );
+	CG_UpdateMediaFraction( 0.4f );
 
 	// register all the server specified shaders
 	for ( i = 1; i < MAX_GAME_SHADERS; i++ )
@@ -1260,11 +926,10 @@ static void CG_RegisterGraphics()
 			break;
 		}
 
-		cgs.gameShaders[ i ] = trap_R_RegisterShader(shaderName,
-							     (RegisterShaderFlags_t) RSF_DEFAULT);
+		cgs.gameShaders[ i ] = trap_R_RegisterShader(shaderName, RSF_DEFAULT);
 	}
 
-	CG_UpdateMediaFraction( 0.77f );
+	CG_UpdateMediaFraction( 0.6f );
 
 	// register all the server specified grading textures
 	// starting with the world wide one
@@ -1280,7 +945,7 @@ static void CG_RegisterGraphics()
 		CG_RegisterReverb( i, CG_ConfigString( CS_REVERB_EFFECTS + i ) );
 	}
 
-	CG_UpdateMediaFraction( 0.79f );
+	CG_UpdateMediaFraction( 0.8f );
 
 	// register all the server specified particle systems
 	for ( i = 1; i < MAX_GAME_PARTICLE_SYSTEMS; i++ )
@@ -1296,6 +961,8 @@ static void CG_RegisterGraphics()
 
 		cgs.gameParticleSystems[ i ] = CG_RegisterParticleSystem( ( char * ) psName );
 	}
+
+	CG_UpdateMediaFraction( 1.0f );
 }
 
 /*
@@ -1330,16 +997,17 @@ static void CG_RegisterClients()
 {
 	int i;
 
-	cg.charModelFraction = 0.0f;
-
 	//precache all the models/sounds/etc
-	for ( i = PCL_NONE + 1; i < PCL_NUM_CLASSES; i++ )
+	if ( !cg_lazyLoadModels.Get() )
 	{
-		CG_PrecacheClientInfo( (class_t) i, BG_ClassModelConfig( i )->modelName,
-		                       BG_ClassModelConfig( i )->skinName );
+		for ( i = PCL_NONE + 1; i < PCL_NUM_CLASSES; i++ )
+		{
+			CG_PrecacheClientInfo( (class_t) i, BG_ClassModelConfig( i )->modelName,
+			                       BG_ClassModelConfig( i )->skinName );
 
-		cg.charModelFraction = ( float ) i / ( float ) PCL_NUM_CLASSES;
-		trap_UpdateScreen();
+			cg.characterLoadingFraction = ( float ) i / ( float ) PCL_NUM_CLASSES;
+			trap_UpdateScreen();
+		}
 	}
 
 	// Borrow these variables for MD5 models so we don't have to create new ones.
@@ -1365,9 +1033,6 @@ static void CG_RegisterClients()
 	    &cgs.media.jetpackAnims[ JANIM_SLIDEIN ],
 	    "models/players/human_base/jetpack.iqm:slidein",
 	    false, false, false );
-
-	cg.charModelFraction = 1.0f;
-	trap_UpdateScreen();
 
 	//load all the clientinfos of clients already connected to the server
 	for ( i = 0; i < MAX_CLIENTS; i++ )
@@ -1456,18 +1121,7 @@ void CG_Init( int serverMessageNum, int clientNum, const glconfig_t& gl, const G
 	new(&cg) cg_t{};
 	memset( cg_entities, 0, sizeof( cg_entities ) );
 
-	// Set up the pmove params with sensible default values, the server params will
-	// be communicated with the "pmove_params" server commands.
-	// These values are the same as the default values of the servers to preserve
-	// compatibility with official Alpha 34 servers, but shouldn't be necessary anymore for Alpha 35
-	cg.pmoveParams.fixed = cg.pmoveParams.synchronous = 0;
-	cg.pmoveParams.accurate = 1;
-	cg.pmoveParams.msec = 8;
-
 	CG_UpdateLoadingStep( LOAD_START );
-	cg.clientNum = clientNum;
-
-	cgs.processedSnapshotNum = serverMessageNum;
 
 	// get the rendering configuration from the client system
 	cgs.glconfig = gl;
@@ -1478,11 +1132,29 @@ void CG_Init( int serverMessageNum, int clientNum, const glconfig_t& gl, const G
 
 	// load a few needed things before we do any screen updates
 	trap_R_SetAltShaderTokens( "unpowered,destroyed,idle,idle2" );
-	cgs.media.whiteShader = trap_R_RegisterShader("gfx/colors/white", (RegisterShaderFlags_t) RSF_DEFAULT);
-	cgs.media.outlineShader = trap_R_RegisterShader("gfx/outline",
-							(RegisterShaderFlags_t) RSF_DEFAULT);
+	cgs.media.whiteShader = trap_R_RegisterShader("gfx/colors/white", RSF_DEFAULT);
+	cgs.media.outlineShader = trap_R_RegisterShader("gfx/outline", RSF_DEFAULT);
 
-	BG_InitAllowedGameElements();
+	// old servers
+	cgs.gameState = gameState;
+
+	// Must be done before trap_UpdateScreen()
+	// or the game will crash.
+	cgs.processedSnapshotNum = serverMessageNum;
+
+	// It was too early to update screen at LOAD_START time,
+	// let's do it now.
+	trap_UpdateScreen();
+
+	// Set up the pmove params with sensible default values, the server params will
+	// be communicated with the "pmove_params" server commands.
+	// These values are the same as the default values of the servers to preserve
+	// compatibility with official Alpha 34 servers, but shouldn't be necessary anymore for Alpha 35
+	cg.pmoveParams.fixed = cg.pmoveParams.synchronous = 0;
+	cg.pmoveParams.accurate = 1;
+	cg.pmoveParams.msec = 8;
+
+	cg.clientNum = clientNum;
 
 	// Initialize item locking state
 	BG_InitUnlockackables();
@@ -1490,12 +1162,7 @@ void CG_Init( int serverMessageNum, int clientNum, const glconfig_t& gl, const G
 	CG_InitConsoleCommands();
 	trap_S_BeginRegistration();
 
-
 	cg.weaponSelect = WP_NONE;
-
-	// old servers
-
-	cgs.gameState = gameState;
 
 	// copy vote display strings so they don't show up blank if we see
 	// the same one directly after connecting
@@ -1521,6 +1188,7 @@ void CG_Init( int serverMessageNum, int clientNum, const glconfig_t& gl, const G
 
 	// load the new map
 	trap_CM_LoadMap(cgs.mapname);
+
 	CG_InitMinimap();
 
 	CG_UpdateLoadingStep( LOAD_TRAILS );
@@ -1529,39 +1197,44 @@ void CG_Init( int serverMessageNum, int clientNum, const glconfig_t& gl, const G
 	CG_UpdateLoadingStep( LOAD_PARTICLES );
 	CG_LoadParticleSystems();
 
-	CG_UpdateLoadingStep( LOAD_SOUNDS );
-	CG_RegisterSounds();
-
-	// updates loading step by itself
-	CG_RegisterGraphics();
-
 	// load configs after initializing particles and trails since it registers some
 	CG_UpdateLoadingStep( LOAD_CONFIGS );
 	BG_InitAllConfigs();
 
+	CG_UpdateLoadingStep( LOAD_SOUNDS );
+	CG_RegisterSounds();
+
+	cgs.voices = BG_VoiceInit();
+	BG_PrintVoices( cgs.voices, cg_debugVoices.Get() );
+
+	// It updates loading steps by itself.
+	// LOAD_GEOMETRY
+	// LOAD_ASSETS
+	CG_RegisterGraphics();
+
 	// load weapons upgrades and buildings after configs
 	CG_UpdateLoadingStep( LOAD_WEAPONS );
+	CG_InitMarkPolys();
 	CG_InitWeapons();
 
 	CG_UpdateLoadingStep( LOAD_UPGRADES );
 	CG_InitUpgrades();
 
-	CG_UpdateLoadingStep( LOAD_CLASSES );
-	CG_InitClasses();
-
 	CG_UpdateLoadingStep( LOAD_BUILDINGS );
 	CG_InitBuildables();
 
-	CG_UpdateLoadingStep( LOAD_REMAINING );
-
-	cgs.voices = BG_VoiceInit();
-	BG_PrintVoices( cgs.voices, cg_debugVoices.integer );
-
+	CG_UpdateLoadingStep( LOAD_CLIENTS );
+	CG_InitClasses();
 	CG_RegisterClients(); // if low on memory, some clients will be deferred
 
-	CG_InitMarkPolys();
+	CG_UpdateLoadingStep( LOAD_HUDS );
+	CG_Rocket_LoadHuds();
+	CG_LoadBeaconsConfig();
 
+	CG_UpdateLoadingStep( LOAD_GLSL );
 	trap_S_EndRegistration();
+
+	CG_UpdateLoadingStep( LOAD_DONE );
 
 	// Make sure we have update values (scores)
 	CG_SetConfigValues();
@@ -1572,12 +1245,6 @@ void CG_Init( int serverMessageNum, int clientNum, const glconfig_t& gl, const G
 
 	trap_S_ClearLoopingSounds( true );
 	trap_Cvar_Set( "ui_winner", "" ); // Clear the previous round's winner.
-
-	CG_Rocket_LoadHuds();
-
-	CG_LoadBeaconsConfig();
-
-	CG_UpdateLoadingStep( LOAD_DONE );
 }
 
 /*

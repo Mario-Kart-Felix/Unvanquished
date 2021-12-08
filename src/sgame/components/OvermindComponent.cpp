@@ -50,7 +50,7 @@ void OvermindComponent::Think(int timeDelta) {
 Entity* OvermindComponent::FindTarget() {
 	Entity* target = nullptr;
 
-	ForEntities<ClientComponent>([&](Entity& candidate, ClientComponent& clientComponent) {
+	ForEntities<ClientComponent>([&](Entity& candidate, ClientComponent&) {
 		// Do not target spectators.
 		if (candidate.Get<SpectatorComponent>()) return;
 
@@ -89,14 +89,9 @@ bool OvermindComponent::CompareTargets(Entity& a, Entity& b) const {
 		if (aDistance < ATTACK_RANGE && bDistance > ATTACK_RANGE) return true;
 		if (aDistance > ATTACK_RANGE && bDistance < ATTACK_RANGE) return false;
 
-		HealthComponent* aHealthComponent = a.Get<HealthComponent>();
-		HealthComponent* bHealthComponent = b.Get<HealthComponent>();
-
 		// The overmind senses weakness!
-		if (aHealthComponent && bHealthComponent) {
-			if (aHealthComponent->HealthFraction() < bHealthComponent->HealthFraction()) return true;
-			if (aHealthComponent->HealthFraction() > bHealthComponent->HealthFraction()) return false;
-		}
+		if (Entities::HealthFraction(a) < Entities::HealthFraction(b)) return true;
+		if (Entities::HealthFraction(a) > Entities::HealthFraction(b)) return false;
 	}
 
 	// Break tie by preferring smaller distance.

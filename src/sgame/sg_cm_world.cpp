@@ -37,11 +37,12 @@ Maryland 20850 USA.
 #include "sg_local.h"
 #include "sg_cm_world.h"
 
-typedef struct worldEntity_s
+struct worldSector_t;
+struct worldEntity_t
 {
-	struct worldSector_s *worldSector;
-	struct worldEntity_s *nextEntityInWorldSector;
-} worldEntity_t;
+	worldSector_t *worldSector;
+	worldEntity_t *nextEntityInWorldSector;
+};
 
 worldEntity_t wentities[ MAX_GENTITIES ];
 
@@ -113,14 +114,8 @@ clipHandle_t G_CM_ClipHandleForEntity( const gentity_t *ent )
 		return CM_InlineModel( ent->s.modelindex );
 	}
 
-	if ( ent->r.svFlags & SVF_CAPSULE )
-	{
-		// create a temp capsule from bounding box sizes
-		return CM_TempBoxModel( ent->r.mins, ent->r.maxs, true );
-	}
-
-	// create a temp tree from bounding box sizes
-	return CM_TempBoxModel( ent->r.mins, ent->r.maxs, false );
+	// create a temp tree/capsule from bounding box sizes
+	return CM_TempBoxModel( ent->r.mins, ent->r.maxs, /*capsule = */ ent->r.svFlags & SVF_CAPSULE );
 }
 
 /*
@@ -239,14 +234,14 @@ them, which prevents having to deal with multiple fragments of a single entity.
 ===============================================================================
 */
 
-typedef struct worldSector_s
+struct worldSector_t
 {
 	int                  axis; // -1 = leaf node
 	float                dist;
-	struct worldSector_s *children[ 2 ];
+	worldSector_t        *children[ 2 ];
 
 	worldEntity_t        *entities;
-} worldSector_t;
+};
 
 #define AREA_DEPTH 4
 #define AREA_NODES 64
@@ -427,43 +422,13 @@ void G_CM_LinkEntity( gentity_t *gEnt )
 	else if ( gEnt->r.contents & ( CONTENTS_SOLID | CONTENTS_BODY ) )
 	{
 		// assume that x/y are equal and symetric
-		i = gEnt->r.maxs[ 0 ];
-
-		if ( i < 1 )
-		{
-			i = 1;
-		}
-
-		if ( i > 255 )
-		{
-			i = 255;
-		}
+		i = Math::Clamp( gEnt->r.maxs[ 0 ], 1.0f, 255.0f );
 
 		// z is not symetric
-		j = ( -gEnt->r.mins[ 2 ] );
-
-		if ( j < 1 )
-		{
-			j = 1;
-		}
-
-		if ( j > 255 )
-		{
-			j = 255;
-		}
+		j = Math::Clamp( -gEnt->r.mins[ 2 ], 1.0f, 255.0f );
 
 		// and z maxs can be negative...
-		k = ( gEnt->r.maxs[ 2 ] + 32 );
-
-		if ( k < 1 )
-		{
-			k = 1;
-		}
-
-		if ( k > 255 )
-		{
-			k = 255;
-		}
+		k = Math::Clamp( gEnt->r.maxs[ 2 ] + 32.0f, 1.0f, 255.0f );
 
 		gEnt->s.solid = ( k << 16 ) | ( j << 8 ) | i;
 	}
@@ -646,7 +611,9 @@ void G_CM_AreaEntities_r( worldSector_t *node, areaParms_t *ap )
 		if ( gcheck->r.absmin[ 0 ] > ap->maxs[ 0 ]
 		     || gcheck->r.absmin[ 1 ] > ap->maxs[ 1 ]
 		     || gcheck->r.absmin[ 2 ] > ap->maxs[ 2 ]
-		     || gcheck->r.absmax[ 0 ] < ap->mins[ 0 ] || gcheck->r.absmax[ 1 ] < ap->mins[ 1 ] || gcheck->r.absmax[ 2 ] < ap->mins[ 2 ] )
+		     || gcheck->r.absmax[ 0 ] < ap->mins[ 0 ]
+		     || gcheck->r.absmax[ 1 ] < ap->mins[ 1 ]
+		     || gcheck->r.absmax[ 2 ] < ap->mins[ 2 ] )
 		{
 			continue;
 		}
@@ -724,8 +691,7 @@ void G_CM_ClipToEntity( trace_t *trace, const vec3_t start, const vec3_t mins, c
                         const vec3_t end, int entityNum, int contentmask, traceType_t type )
 {
 	gentity_t *touch;
-	clipHandle_t   clipHandle;
-	float          *origin, *angles;
+	clipHandle_t clipHandle;
 
 	touch = &g_entities[ entityNum ];
 
@@ -742,16 +708,17 @@ void G_CM_ClipToEntity( trace_t *trace, const vec3_t start, const vec3_t mins, c
 	// might intersect, so do an exact clip
 	clipHandle = G_CM_ClipHandleForEntity( touch );
 
-	origin = touch->r.currentOrigin;
-	angles = touch->r.currentAngles;
+	const float *origin = touch->r.currentOrigin;
+	const float *angles = touch->r.currentAngles;
 
 	if ( !touch->r.bmodel )
 	{
 		angles = vec3_origin; // boxes don't rotate
 	}
 
-	CM_TransformedBoxTrace( trace, ( float * ) start, ( float * ) end, ( float * ) mins,
-	                        ( float * ) maxs, clipHandle, contentmask, 0, origin, angles, type );
+	CM_TransformedBoxTrace( trace, start, end, mins,
+	                        maxs, clipHandle, contentmask,
+				0, origin, angles, type );
 
 	if ( trace->fraction < 1 )
 	{
@@ -765,7 +732,6 @@ void G_CM_ClipToEntity( trace_t *trace, const vec3_t start, const vec3_t mins, c
 /*
 ====================
 G_CM_ClipMoveToEntities
-
 ====================
 */
 void G_CM_ClipMoveToEntities( moveclip_t *clip )
@@ -776,7 +742,6 @@ void G_CM_ClipMoveToEntities( moveclip_t *clip )
 	int            passOwnerNum;
 	trace_t        trace;
 	clipHandle_t   clipHandle;
-	float          *origin, *angles;
 
 	num = G_CM_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES );
 
@@ -837,8 +802,8 @@ void G_CM_ClipMoveToEntities( moveclip_t *clip )
 		// might intersect, so do an exact clip
 		clipHandle = G_CM_ClipHandleForEntity( touch );
 
-		origin = touch->r.currentOrigin;
-		angles = touch->r.currentAngles;
+		const float *origin = touch->r.currentOrigin;
+		const float *angles = touch->r.currentAngles;
 
 		if ( !touch->r.bmodel )
 		{
@@ -898,9 +863,9 @@ void G_CM_Trace( trace_t *results, const vec3_t start, const vec3_t mins2, const
 		maxs2 = vec3_origin;
 	}
 
-    vec3_t mins, maxs;
-    VectorCopy(mins2, mins);
-    VectorCopy(maxs2, maxs);
+	vec3_t mins, maxs;
+	VectorCopy(mins2, mins);
+	VectorCopy(maxs2, maxs);
 
 	memset( &clip, 0, sizeof( moveclip_t ) );
 
@@ -908,7 +873,7 @@ void G_CM_Trace( trace_t *results, const vec3_t start, const vec3_t mins2, const
 	// -------------
 
 	CM_BoxTrace( &clip.trace, start, end, mins, maxs, 0, contentmask, skipmask, type );
-	clip.trace.entityNum = clip.trace.fraction != 1.0 ? ENTITYNUM_WORLD : ENTITYNUM_NONE;
+	clip.trace.entityNum = clip.trace.fraction == 1.0 ? ENTITYNUM_NONE : ENTITYNUM_WORLD;
 
 	if ( clip.trace.fraction == 0 )
 	{

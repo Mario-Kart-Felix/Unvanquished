@@ -28,88 +28,72 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "Entities.h"
 #include "CBSE.h"
 #include "backend/CBSEBackend.h"
+#include "botlib/bot_api.h"
 
 #define INTERMISSION_DELAY_TIME 1000
 
 level_locals_t level;
 
-namespace {
-struct cvarTable_t
-{
-	vmCvar_t   *vmCvar;
-	const char *cvarName;
-	const char *defaultString;
-	int        cvarFlags;
-	int        modificationCount; // for tracking changes
-	bool   trackChange; // track this variable, and announce if changed
-
-	/* certain cvars can be set in worldspawn, but we don't want those values to
-	   persist, so keep track of non-worldspawn changes and restore that on map
-	   end. unfortunately, if the server crashes, the value set in worldspawn may
-	   persist */
-	char      *explicit_;
-};
-} //namespace
-
 gentity_t          *g_entities;
 gclient_t          *g_clients;
 
-vmCvar_t           g_showHelpOnConnection;
+Cvar::Range<Cvar::Cvar<int>> g_showHelpOnConnection("g_showHelpOnConnection", "show MN_WELCOME on connect (1 = all, 2 = unregistered)", Cvar::NONE, 1, 0, 2);
 
-vmCvar_t           g_timelimit;
-vmCvar_t           g_friendlyFire;
-vmCvar_t           g_friendlyBuildableFire;
-vmCvar_t           g_dretchPunt;
-vmCvar_t           g_password;
-vmCvar_t           g_needpass;
-vmCvar_t           g_maxclients;
-vmCvar_t           g_maxGameClients;
-vmCvar_t           g_speed;
-vmCvar_t           g_gravity;
-vmCvar_t           g_cheats;
-vmCvar_t           g_inactivity;
-vmCvar_t           g_debugMove;
-vmCvar_t           g_debugDamage;
-vmCvar_t           g_debugKnockback;
-vmCvar_t           g_debugTurrets;
-vmCvar_t           g_debugFire;
-vmCvar_t           g_motd;
-vmCvar_t           g_synchronousClients;
-vmCvar_t           g_warmup;
-vmCvar_t           g_doWarmup;
-vmCvar_t           g_lockTeamsAtStart;
-vmCvar_t           g_mapRestarted;
-vmCvar_t           g_logFile;
-vmCvar_t           g_logGameplayStatsFrequency;
-vmCvar_t           g_logFileSync;
-vmCvar_t           g_allowVote;
-vmCvar_t           g_voteLimit;
-vmCvar_t           g_extendVotesPercent;
-vmCvar_t           g_extendVotesTime;
-vmCvar_t           g_kickVotesPercent;
-vmCvar_t           g_denyVotesPercent;
-vmCvar_t           g_mapVotesPercent;
-vmCvar_t           g_mapVotesBefore;
-vmCvar_t           g_drawVotesPercent;
-vmCvar_t           g_drawVotesAfter;
-vmCvar_t           g_drawVoteReasonRequired;
-vmCvar_t           g_admitDefeatVotesPercent;
-vmCvar_t           g_nextMapVotesPercent;
-vmCvar_t           g_pollVotesPercent;
-vmCvar_t           g_botKickVotesAllowed;
-vmCvar_t           g_botKickVotesAllowedThisMap;
+Cvar::Range<Cvar::Cvar<int>> g_gravity(
+		"g_gravity",
+		"how strongly things will be attracted towards the ground",
+		Cvar::NONE,
+		800, 100, 2000);
 
-vmCvar_t           g_teamForceBalance;
-vmCvar_t           g_smoothClients;
-vmCvar_t           pmove_fixed;
-vmCvar_t           pmove_msec;
-vmCvar_t           pmove_accurate;
-vmCvar_t           g_minNameChangePeriod;
-vmCvar_t           g_maxNameChanges;
+Cvar::Cvar<int> g_timelimit("timelimit", "max game length in minutes", Cvar::SERVERINFO, 45);
+Cvar::Cvar<bool> g_dretchPunt("g_dretchPunt", "aliens can propel dretches by attacking them", Cvar::NONE, true);
+// This isn't a configuration variable to set whether a password is needed.
+// Rather, it's value is automatically set based on whether g_password is empty;
+// it's a hack to stick a value into the serverinfo string.
+Cvar::Range<Cvar::Cvar<int>> g_needpass("g_needpass", "FOR INTERNAL USE", Cvar::SERVERINFO, 0, 0, 1);
+Cvar::Cvar<int> g_maxGameClients("g_maxGameClients", "max number of players (see also sv_maxclients)", Cvar::SERVERINFO, 0);
+Cvar::Cvar<float> g_speed("g_speed", "player movement speed multiplier", Cvar::NONE, 320);
+bool g_cheats;
+Cvar::Cvar<std::string> g_inactivity("g_inactivity", "seconds of inactivity before a player is removed. append 's' to spec instead of kick", Cvar::NONE, "0");
+Cvar::Cvar<int> g_debugMove("g_debugMove", "sgame pmove debug level", Cvar::NONE, 0);
+Cvar::Cvar<bool> g_debugFire("g_debugFire", "debug ground fire spawning", Cvar::NONE, false);
+Cvar::Cvar<std::string> g_motd("g_motd", "message of the day", Cvar::NONE, "");
+// g_synchronousClients stays as an int for now instead of a bool
+// because there is a place in cl_main.cpp that tries to parse it
+Cvar::Range<Cvar::Cvar<int>> g_synchronousClients("g_synchronousClients", "calculate player movement once per server frame", Cvar::NONE, 0, 0, 1);
+Cvar::Cvar<int> g_warmup("g_warmup", "seconds after game start before players can join", Cvar::NONE, 10);
+Cvar::Cvar<bool> g_doWarmup("g_doWarmup", "whether to enable warmup period (g_warmup)", Cvar::NONE, false);
+Cvar::Cvar<bool> g_lockTeamsAtStart("g_lockTeamsAtStart", "(internal use) lock teams at start of match", Cvar::NONE, false);
+Cvar::Cvar<std::string> g_logFile("g_logFile", "sgame log file, relative to <homepath>/game/", Cvar::NONE, "games.log");
+Cvar::Cvar<int> g_logGameplayStatsFrequency("g_logGameplayStatsFrequency", "log gameplay stats every x seconds", Cvar::NONE, 10);
+Cvar::Cvar<bool> g_logFileSync("g_logFileSync", "flush g_logFile on every write", Cvar::NONE, false);
+Cvar::Cvar<bool> g_allowVote("g_allowVote", "whether votes of any kind are allowed", Cvar::NONE, true);
+Cvar::Cvar<int> g_voteLimit("g_voteLimit", "max votes per player per round", Cvar::NONE, 5);
+Cvar::Cvar<int> g_extendVotesPercent("g_extendVotesPercent", "percentage required for extend timelimit vote", Cvar::NONE, 74);
+Cvar::Cvar<int> g_extendVotesTime("g_extendVotesTime", "number of minutes 'extend' vote adds to timelimit", Cvar::NONE, 10);
+Cvar::Cvar<int> g_kickVotesPercent("g_kickVotesPercent", "percentage required for votes to remove players", Cvar::NONE, 51);
+Cvar::Cvar<int> g_denyVotesPercent("g_denyVotesPercent", "percentage required for votes to strip/reinstate a player's chat/build privileges", Cvar::NONE, 51);
+Cvar::Cvar<int> g_mapVotesPercent("g_mapVotesPercent", "percentage required for map changing votes", Cvar::NONE, 51);
+Cvar::Cvar<int> g_mapVotesBefore("g_mapVotesBefore", "map change votes not allowed after this many minutes", Cvar::NONE, 5);
+Cvar::Cvar<int> g_drawVotesPercent("g_drawVotesPercent", "percentage required for draw vote", Cvar::NONE, 51);
+Cvar::Cvar<int> g_drawVotesAfter("g_drawVotesAfter", "draw votes not allowed before this many minutes", Cvar::NONE, 0);
+Cvar::Cvar<bool> g_drawVoteReasonRequired("g_drawVoteReasonRequired", "whether a reason is required for draw vote", Cvar::NONE, false);
+Cvar::Cvar<int> g_admitDefeatVotesPercent("g_admitDefeatVotesPercent", "percentage required for admitdefeat vote", Cvar::NONE, 74);
+Cvar::Cvar<int> g_nextMapVotesPercent("g_nextMapVotesPercent", "percentage required for nextmap vote", Cvar::NONE, 51);
+Cvar::Cvar<int> g_pollVotesPercent("g_pollVotesPercent", "percentage required for a poll to 'pass'", Cvar::NONE, 0);
 
+Cvar::Range<Cvar::Cvar<int>> g_teamForceBalance("g_teamForceBalance", "disallow joining a team with more players (1 = always, 2 = allow N vs. 0)", Cvar::NONE, 0, 0, 2);
+Cvar::Cvar<bool> g_smoothClients("g_smoothClients", "something about player movement extrapolation", Cvar::NONE, true);
+Cvar::Cvar<bool> pmove_fixed("pmove_fixed", "use pmove_msec instead of 66", Cvar::NONE, false);
+Cvar::Range<Cvar::Cvar<int>> pmove_msec("pmove_msec", "max sgame pmove period in milliseconds", Cvar::NONE, 8, 8, 33);
+Cvar::Cvar<bool> pmove_accurate("pmove_accurate", "don't round player velocity to integer", Cvar::NONE, true);
+Cvar::Cvar<float> g_minNameChangePeriod("g_minNameChangePeriod", "player must wait x seconds to change name", Cvar::NONE, 5);
+Cvar::Cvar<int> g_maxNameChanges("g_maxNameChanges", "max name changes per game", Cvar::NONE, 5);
+
+// gameplay: mining
 Cvar::Callback<Cvar::Cvar<int>> g_buildPointInitialBudget(
 		"g_BPInitialBudget",
-		"Initial Budget",
+		"Initial build points count",
 		Cvar::SERVERINFO,
 		DEFAULT_BP_INITIAL_BUDGET,
 		[](int) {
@@ -123,329 +107,167 @@ Cvar::Callback<Cvar::Cvar<int>> g_buildPointBudgetPerMiner(
 		[](int) {
 			G_UpdateBuildPointBudgets();
 		});
-vmCvar_t           g_buildPointRecoveryInititalRate;
-vmCvar_t           g_buildPointRecoveryRateHalfLife;
+Cvar::Cvar<int> g_buildPointRecoveryInitialRate(
+		"g_BPRecoveryInitialRate",
+		"The initial speed at which BP will be recovered (in BP per minute)",
+		Cvar::SERVERINFO,
+		DEFAULT_BP_RECOVERY_INITIAL_RATE);
+Cvar::Cvar<int> g_buildPointRecoveryRateHalfLife(
+		"g_BPRecoveryRateHalfLife",
+		"The duration one will wait before BP recovery gets twice as slow (in minutes)",
+		Cvar::SERVERINFO,
+		DEFAULT_BP_RECOVERY_RATE_HALF_LIFE);
 
-vmCvar_t           g_debugMomentum;
-vmCvar_t           g_momentumHalfLife;
-vmCvar_t           g_momentumRewardDoubleTime;
-vmCvar_t           g_unlockableMinTime;
-vmCvar_t           g_momentumBaseMod;
-vmCvar_t           g_momentumKillMod;
-vmCvar_t           g_momentumBuildMod;
-vmCvar_t           g_momentumDeconMod;
-vmCvar_t           g_momentumDestroyMod;
+Cvar::Range<Cvar::Cvar<int>> g_debugMomentum("g_debugMomentum", "momentum debug level", Cvar::NONE, 0, 0, 2);
+Cvar::Cvar<float> g_momentumHalfLife("g_momentumHalfLife", "minutes for momentum to decrease 50%", Cvar::SERVERINFO, DEFAULT_MOMENTUM_HALF_LIFE);
+Cvar::Cvar<float> g_momentumRewardDoubleTime("g_momentumRewardDoubleTime", "some momentum rewards double after x minutes", Cvar::NONE, DEFAULT_CONF_REWARD_DOUBLE_TIME);
+Cvar::Cvar<float> g_unlockableMinTime("g_unlockableMinTime", "an unlock is lost after x seconds without further momentum rewards", Cvar::SERVERINFO, DEFAULT_UNLOCKABLE_MIN_TIME);
+Cvar::Cvar<float> g_momentumBaseMod("g_momentumBaseMod", "generic momentum reward multiplier", Cvar::NONE, DEFAULT_MOMENTUM_BASE_MOD);
+Cvar::Cvar<float> g_momentumKillMod("g_momentumKillMod", "momentum reward multiplier for kills", Cvar::NONE, DEFAULT_MOMENTUM_KILL_MOD);
+Cvar::Cvar<float> g_momentumBuildMod("g_momentumBuildMod", "momentum reward multiplier for construction", Cvar::NONE, DEFAULT_MOMENTUM_BUILD_MOD);
+Cvar::Cvar<float> g_momentumDeconMod("g_momentumDeconMod", "momentum penalty multiplier for deconstruction", Cvar::NONE, DEFAULT_MOMENTUM_DECON_MOD);
+Cvar::Cvar<float> g_momentumDestroyMod("g_momentumDestroyMod", "momentum reward multiplier for killing buildables", Cvar::NONE, DEFAULT_MOMENTUM_DESTROY_MOD);
 
-vmCvar_t           g_humanAllowBuilding;
-vmCvar_t           g_alienAllowBuilding;
 
-vmCvar_t           g_alienOffCreepRegenHalfLife;
+Cvar::Cvar<bool> g_humanAllowBuilding(
+		"g_humanAllowBuilding",
+		"can human build",
+		Cvar::NONE,
+		true);
 
-vmCvar_t           g_teamImbalanceWarnings;
-vmCvar_t           g_freeFundPeriod;
+Cvar::Cvar<bool> g_alienAllowBuilding(
+		"g_alienAllowBuilding",
+		"can aliens build",
+		Cvar::NONE,
+		true);
 
-vmCvar_t           g_unlagged;
+Cvar::Cvar<float> g_alienOffCreepRegenHalfLife("g_alienOffCreepRegenHalfLife", "half-life in seconds for decay of creep's healing bonus", Cvar::NONE, 0);
 
-vmCvar_t           g_disabledEquipment;
-vmCvar_t           g_disabledClasses;
-vmCvar_t           g_disabledBuildables;
-vmCvar_t           g_disabledVoteCalls;
+Cvar::Cvar<bool> g_teamImbalanceWarnings("g_teamImbalanceWarnings", "send 'Teams are imbalanced' messages?", Cvar::NONE, true);
+Cvar::Cvar<int> g_freeFundPeriod("g_freeFundPeriod", "every x seconds, players get funds for nothing", Cvar::NONE, DEFAULT_FREEKILL_PERIOD);
+// int instead of bool for now to avoid changing the serverinfo format
+Cvar::Range<Cvar::Cvar<int>> g_unlagged("g_unlagged", "whether latency compensation is enabled", Cvar::SERVERINFO, 1, 0, 1);
+Cvar::Cvar<std::string> g_disabledVoteCalls(
+		"g_disabledVoteCalls",
+		"Forbidden votes, like " QQ("kickbots, nextmap, spectate"),
+		Cvar::SERVERINFO,
+		"" // everything is allowed by default
+		);
 
-vmCvar_t           g_debugMapRotation;
-vmCvar_t           g_currentMapRotation;
-vmCvar_t           g_mapRotationNodes;
-vmCvar_t           g_mapRotationStack;
-vmCvar_t           g_nextMap;
-vmCvar_t           g_nextMapLayouts;
-vmCvar_t           g_initialMapRotation;
-vmCvar_t           g_mapLog;
-vmCvar_t           g_mapStartupMessageDelay;
+Cvar::Cvar<bool> g_debugMapRotation("g_debugMapRotation", "print map rotation debug info", Cvar::NONE, false);
+Cvar::Cvar<int> g_currentMapRotation("g_currentMapRotation", "FOR INTERNAL USE", Cvar::NONE, -1);
+Cvar::Cvar<std::string> g_mapRotationNodes("g_mapRotationNodes", "FOR INTERNAL USE", Cvar::NONE, "");
+Cvar::Cvar<std::string> g_mapRotationStack("g_mapRotationStack", "FOR INTERNAL USE", Cvar::NONE, "");
+Cvar::Cvar<std::string> g_nextMap("g_nextMap", "map to load next (cleared after use)", Cvar::NONE, "");
+Cvar::Cvar<std::string> g_nextMapLayouts("g_nextMapLayouts", "list of layouts (one's chosen randomly) to go with g_nextMap", Cvar::NONE, "");
+Cvar::Cvar<std::string> g_initialMapRotation("g_initialMapRotation", "map rotation to use on server startup", Cvar::NONE, "rotation1");
+Cvar::Cvar<std::string> g_mapLog("g_mapLog", "contains results of recent games", Cvar::NONE, "");
+Cvar::Cvar<std::string> g_mapStartupMessage("g_mapStartupMessage", "message sent to players on connection (reset after game)", Cvar::NONE, "");
+Cvar::Cvar<int> g_mapStartupMessageDelay("g_mapStartupMessageDelay", "show g_mapStartupMessage x milliseconds after connection", Cvar::LATCH, 5000);
 
-vmCvar_t           g_debugVoices;
-vmCvar_t           g_enableVsays;
+Cvar::Cvar<bool> g_debugVoices("g_debugVoices", "print sgame's list of vsays on startup", Cvar::NONE, false);
+Cvar::Cvar<bool> g_enableVsays("g_voiceChats", "allow vsays (prerecorded audio messages)", Cvar::NONE, true);
 
-vmCvar_t           g_shove;
-vmCvar_t           g_antiSpawnBlock;
+Cvar::Cvar<float> g_shove("g_shove", "force multiplier when pushing players", Cvar::NONE, 0.0);
+Cvar::Cvar<bool> g_antiSpawnBlock("g_antiSpawnBlock", "push away players who block their spawns", Cvar::NONE, false);
 
-vmCvar_t           g_mapConfigs;
-vmCvar_t           g_sayAreaRange;
+Cvar::Cvar<std::string> g_mapConfigs("g_mapConfigs", "map config directory, relative to <homepath>/config/", Cvar::NONE, "");
+Cvar::Cvar<float> g_sayAreaRange("g_sayAreaRange", "distance for area chat messages", Cvar::NONE, 1000);
 
-vmCvar_t           g_floodMaxDemerits;
-vmCvar_t           g_floodMinTime;
+Cvar::Cvar<int> g_floodMaxDemerits("g_floodMaxDemerits", "client message rate control (lower = stricter)", Cvar::NONE, 5000);
+Cvar::Cvar<int> g_floodMinTime("g_floodMinTime", "mute period after flooding, in milliseconds", Cvar::NONE, 2000);
 
-vmCvar_t           g_defaultLayouts;
-vmCvar_t           g_layouts;
-vmCvar_t           g_layoutAuto;
+Cvar::Cvar<std::string> g_defaultLayouts("g_defaultLayouts", "layouts to pick randomly from each map", Cvar::LATCH, "");
+Cvar::Cvar<std::string> g_layouts("g_layouts", "layouts for next map (cleared after use)", Cvar::LATCH, "");
+Cvar::Cvar<bool> g_layoutAuto("g_layoutAuto", "pick arbitrary layout instead of builtin", Cvar::NONE, false);
 
-vmCvar_t           g_emoticonsAllowedInNames;
-vmCvar_t           g_unnamedNumbering;
-vmCvar_t           g_unnamedNamePrefix;
+Cvar::Cvar<bool> g_emoticonsAllowedInNames("g_emoticonsAllowedInNames", "allow [emoticon]s in player names", Cvar::NONE, true);
+Cvar::Cvar<int> g_unnamedNumbering("g_unnamedNumbering", "FOR INTERNAL USE", Cvar::NONE, -1);
+Cvar::Cvar<std::string> g_unnamedNamePrefix("g_unnamedNamePrefix", "prefix for auto-assigned player names", Cvar::NONE, UNNAMED_PLAYER "#");
+Cvar::Cvar<std::string> g_unnamedBotNamePrefix("g_unnamedBotNamePrefix", "default name prefix for bots", Cvar::NONE, UNNAMED_BOT "#");
 
-vmCvar_t           g_admin;
-vmCvar_t           g_adminWarn;
-vmCvar_t           g_adminTempBan;
-vmCvar_t           g_adminMaxBan;
-vmCvar_t           g_adminRetainExpiredBans;
+Cvar::Cvar<std::string> g_admin("g_admin", "admin levels file, relative to <homepath>/game/", Cvar::NONE, "admin.dat");
+Cvar::Cvar<std::string> g_adminWarn("g_adminWarn", "duration of warning \"bans\"", Cvar::NONE, "1h");
+Cvar::Cvar<std::string> g_adminTempBan("g_adminTempBan", "ban duration for kick and speclock", Cvar::NONE, "2m");
+Cvar::Cvar<std::string> g_adminMaxBan("g_adminMaxBan", "maximum ban duration", Cvar::NONE, "2w");
+Cvar::Cvar<bool> g_adminRetainExpiredBans("g_adminRetainExpiredBans", "keep records of expired bans", Cvar::NONE, true);
 
-vmCvar_t           g_privateMessages;
-vmCvar_t           g_specChat;
-vmCvar_t           g_publicAdminMessages;
-vmCvar_t           g_allowTeamOverlay;
+Cvar::Cvar<bool> g_privateMessages("g_privateMessages", "allow private messages", Cvar::NONE, true);
+Cvar::Cvar<bool> g_specChat("g_specChat", "allow public messages by spectators", Cvar::NONE, true);
+Cvar::Cvar<bool> g_publicAdminMessages("g_publicAdminMessages", "allow non-admins to write to admin chat", Cvar::NONE, true);
+Cvar::Cvar<bool> g_allowTeamOverlay("g_allowTeamOverlay", "provide teammate info for HUD", Cvar::NONE, true);
 
-vmCvar_t           g_tag;
+Cvar::Cvar<bool> g_showKillerHP("g_showKillerHP", "show killer's health to killed player", Cvar::NONE, false);
+Cvar::Cvar<int> g_combatCooldown("g_combatCooldown", "team change disallowed until x seconds after combat", Cvar::NONE, 15);
 
-vmCvar_t           g_showKillerHP;
-vmCvar_t           g_combatCooldown;
+Cvar::Cvar<bool> g_geoip("g_geoip", "announce player's country upon connection", Cvar::NONE, true);
 
-vmCvar_t           g_geoip;
+Cvar::Range<Cvar::Cvar<int>> g_debugEntities("g_debugEntities", "entity debug level", Cvar::NONE, 0, -2, 3);
 
-vmCvar_t           g_debugEntities;
+Cvar::Cvar<bool> g_instantBuilding("g_instantBuilding", "cheat mode for building", Cvar::NONE, false);
 
-vmCvar_t           g_instantBuilding;
-
-vmCvar_t           g_emptyTeamsSkipMapTime;
+Cvar::Cvar<int> g_emptyTeamsSkipMapTime("g_emptyTeamsSkipMapTime", "end game over x minutes if no real players", Cvar::NONE, 0);
 
 Cvar::Cvar<bool>   g_neverEnd("g_neverEnd", "cheat to never end a game, helpful to load a map without spawn for testing purpose", Cvar::NONE, false);
 
 Cvar::Cvar<float>  g_evolveAroundHumans("g_evolveAroundHumans", "Ratio of alien buildings to human entities that always allow evolution", Cvar::NONE, 1.5f);
-Cvar::Cvar<float>  g_devolveMaxBaseDistance("g_devolveMaxBaseDistance", "Max Overmind distance to allow devolving", Cvar::NONE, 1000.0f);
+Cvar::Cvar<float>  g_devolveMaxBaseDistance("g_devolveMaxBaseDistance", "Max Overmind distance to allow devolving", Cvar::SERVERINFO, 1000.0f);
+
+Cvar::Cvar<bool>   g_autoPause("g_autoPause", "pause empty server", Cvar::NONE, false);
 
 // <bot stuff>
 
 // bot buy cvars
-vmCvar_t g_bot_buy;
-vmCvar_t g_bot_rifle;
-vmCvar_t g_bot_painsaw;
-vmCvar_t g_bot_shotgun;
-vmCvar_t g_bot_lasgun;
-vmCvar_t g_bot_mdriver;
-vmCvar_t g_bot_chaingun;
-vmCvar_t g_bot_prifle;
-vmCvar_t g_bot_flamer;
-vmCvar_t g_bot_lcannon;
+Cvar::Cvar<bool> g_bot_buy("g_bot_buy", "whether bots use the Armoury", Cvar::NONE, true);
+// human weapons
+Cvar::Cvar<bool> g_bot_ckit("g_bot_ckit", "whether bots buy the Construction Kit", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_rifle("g_bot_rifle", "whether bots use SMG", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_painsaw("g_bot_painsaw", "whether bots buy the Painsaw", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_shotgun("g_bot_shotgun", "whether bots buy the Shotgun", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_lasgun("g_bot_lasgun", "whether bots buy the Lasgun", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_mdriver("g_bot_mdriver", "whether bots buy the Mass Driver", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_chaingun("g_bot_chain", "whether bots buy the Chaingun", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_prifle("g_bot_prifle", "whether bots buy the Pulse Rifle", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_flamer("g_bot_flamer", "whether bots buy the Flamethrower", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_lcannon("g_bot_lcannon", "whether bots buy the Lucifer Cannon", Cvar::NONE, true);
+// human armors
+Cvar::Cvar<bool> g_bot_battlesuit("g_bot_battlesuit", "whether bots buy the Battlesuit", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_mediumarmour("g_bot_mediumarmour", "whether bots buy Medium Armour", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_lightarmour("g_bot_lightarmour", "whether bots buy Light Armour", Cvar::NONE, true);
+// human upgrades
+Cvar::Cvar<bool> g_bot_radar("g_bot_radar", "whether bots buy the Radar", Cvar::NONE, true);
+// bots won't buy radars if more than this percent allies already have it
+Cvar::Cvar<int> g_bot_radarRatio("g_bot_radarRatio", "bots target x% of team owning radar", Cvar::NONE, 75);
+Cvar::Cvar<bool> g_bot_jetpack("g_bot_jetpack", "whether bots buy the Jetpack", Cvar::NONE, false);
+Cvar::Cvar<bool> g_bot_grenade("g_bot_grenade", "whether bots buy the Grenade", Cvar::NONE, false);
+Cvar::Cvar<bool> g_bot_firebomb("g_bot_firebomb", "whether bots buy the Firebomb", Cvar::NONE, false);
 
 // bot evolution cvars
-vmCvar_t g_bot_evolve;
-vmCvar_t g_bot_level1;
-vmCvar_t g_bot_level2;
-vmCvar_t g_bot_level2upg;
-vmCvar_t g_bot_level3;
-vmCvar_t g_bot_level3upg;
-vmCvar_t g_bot_level4;
+Cvar::Cvar<bool> g_bot_evolve("g_bot_evolve", "whether bots can evolve", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_builder("g_bot_builder", "whether bots use non-advanced Granger", Cvar::NONE, false);
+Cvar::Cvar<bool> g_bot_builderupg("g_bot_builderupg", "whether bots use Advanced Granger", Cvar::NONE, false);
+Cvar::Cvar<bool> g_bot_level0("g_bot_level0", "whether bots use Dretch", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_level1("g_bot_level1", "whether bots use Mantis", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_level2("g_bot_level2", "whether bots use non-advanced Marauder", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_level2upg("g_bot_level2upg", "whether bots use Advanced Marauder", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_level3("g_bot_level3", "whether bots use non-advanced Dragoon", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_level3upg("g_bot_level3upg", "whether bots use Advanced Dragoon", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_level4("g_bot_level4", "whether bots use Tyrant", Cvar::NONE, true);
 
 // misc bot cvars
-vmCvar_t g_bot_attackStruct;
-vmCvar_t g_bot_roam;
-vmCvar_t g_bot_rush;
-vmCvar_t g_bot_repair;
-vmCvar_t g_bot_build;
-vmCvar_t g_bot_retreat;
-vmCvar_t g_bot_fov;
-vmCvar_t g_bot_chasetime;
-vmCvar_t g_bot_reactiontime;
-vmCvar_t g_bot_infinite_funds;
-vmCvar_t g_bot_numInGroup;
-vmCvar_t g_bot_persistent;
-vmCvar_t g_bot_debug;
-vmCvar_t g_bot_buildLayout;
+Cvar::Cvar<bool> g_bot_attackStruct("g_bot_attackStruct", "whether bots target buildables", Cvar::NONE, true);
+Cvar::Cvar<float> g_bot_fov("g_bot_fov", "bots' \"field of view\"", Cvar::NONE, 125);
+Cvar::Cvar<int> g_bot_chasetime("g_bot_chasetime", "bots stop chasing after x ms out of sight", Cvar::NONE, 5000);
+Cvar::Cvar<int> g_bot_reactiontime("g_bot_reactiontime", "bots' reaction time to enemies (milliseconds)", Cvar::NONE, 500);
+Cvar::Cvar<bool> g_bot_infinite_funds("g_bot_infinite_funds", "give bots unlimited funds", Cvar::NONE, false);
 
 //</bot stuff>
 
-// copy cvars that can be set in worldspawn so they can be restored later
-static char        cv_gravity[ MAX_CVAR_VALUE_STRING ];
+static Cvar::Cvar<std::string> gamename("gamename", "game/mod identifier", Cvar::SERVERINFO | Cvar::ROM, GAME_VERSION);
+static Cvar::Cvar<std::string> gamedate("gamedate", "date the sgame was compiled", Cvar::ROM, __DATE__);
 
-static cvarTable_t gameCvarTable[] =
-{
-	// special purpose (external source, read only, etc.)
-	// TODO: Split and comment this section
-	{ nullptr,                           "gamename",                      GAME_VERSION,                       CVAR_SERVERINFO | CVAR_ROM,                      0, false , nullptr          },
-	{ nullptr,                           "gamedate",                      __DATE__,                           CVAR_ROM,                                        0, false , nullptr          },
-	{ nullptr,                           "sv_mapname",                    "",                                 CVAR_SERVERINFO,                                 0, false , nullptr          },
-	{ nullptr,                           "P",                             "",                                 CVAR_SERVERINFO,                                 0, false , nullptr          },
-	{ nullptr,                           "B",                             "",                                 CVAR_SERVERINFO,                                 0, false , nullptr          },
-	{ nullptr,                           "g_mapStartupMessage",           "",                                 0,                                               0, false , nullptr          },
-	{ nullptr,                           "g_mapConfigsLoaded",            "0",                                0,                                               0, false , nullptr          },
-	{ &g_maxclients,                  "sv_maxclients",                 "24",                               CVAR_SERVERINFO | CVAR_LATCH,                    0, false    , nullptr       },
-	{ &g_mapRestarted,                "g_mapRestarted",                "0",                                0,                                               0, false    , nullptr       },
-	{ &g_lockTeamsAtStart,            "g_lockTeamsAtStart",            "0",                                0,                                               0, false    , nullptr       },
-	{ &g_tag,                         "g_tag",                         "unv",                              CVAR_INIT,                                       0, false    , nullptr       },
-
-
-	// server: basic
-	{ &g_maxGameClients,              "g_maxGameClients",              "0",                                CVAR_SERVERINFO,                                 0, false    , nullptr       },
-	{ &g_needpass,                    "g_needpass",                    "0",                                CVAR_SERVERINFO,                                 0, false    , nullptr       },
-	{ &g_password,                    "g_password",                    "",                                 CVAR_USERINFO,                                   0, false    , nullptr       },
-	{ &g_motd,                        "g_motd",                        "",                                 0,                                               0, false    , nullptr       },
-	{ &g_showHelpOnConnection,        "g_showHelpOnConnection",        "1",                                0,                                               0, false    , nullptr       },
-
-	// server: network related
-	{ &g_unlagged,                    "g_unlagged",                    "1",                                CVAR_SERVERINFO,                                 0, true     , nullptr       },
-	{ &g_smoothClients,               "g_smoothClients",               "1",                                0,                                               0, false    , nullptr       },
-	{ &g_synchronousClients,          "g_synchronousClients",          "0",                                0,                                               0, false    , nullptr       },
-	{ &pmove_fixed,                   "pmove_fixed",                   "0",                                0,                                               0, false    , nullptr       },
-	{ &pmove_msec,                    "pmove_msec",                    "8",                                0,                                               0, false    , nullptr       },
-	{ &pmove_accurate,                "pmove_accurate",                "1",                                0,                                               0, false    , nullptr       },
-	{ &g_floodMaxDemerits,            "g_floodMaxDemerits",            "5000",                             0,                                               0, false    , nullptr       },
-	{ &g_floodMinTime,                "g_floodMinTime",                "2000",                             0,                                               0, false    , nullptr       },
-
-	// clients: limits
-	{ &g_minNameChangePeriod,         "g_minNameChangePeriod",         "5",                                0,                                               0, false    , nullptr       },
-	{ &g_maxNameChanges,              "g_maxNameChanges",              "5",                                0,                                               0, false    , nullptr       },
-	{ &g_enableVsays,                 "g_voiceChats",                  "1",                                0,                                               0, false    , nullptr       },
-	{ &g_inactivity,                  "g_inactivity",                  "0",                                0,                                               0, true     , nullptr       },
-	{ &g_emoticonsAllowedInNames,     "g_emoticonsAllowedInNames",     "1",                                CVAR_LATCH,                                      0, false    , nullptr       },
-	{ &g_privateMessages,             "g_privateMessages",             "1",                                0,                                               0, false    , nullptr       },
-	{ &g_specChat,                    "g_specChat",                    "1",                                0,                                               0, false    , nullptr       },
-
-	// clients: voting
-	{ &g_allowVote,                   "g_allowVote",                   "1",                                0,                                               0, false    , nullptr       },
-	{ &g_voteLimit,                   "g_voteLimit",                   "5",                                0,                                               0, false    , nullptr       },
-	{ &g_disabledVoteCalls,           "g_disabledVoteCalls",           "",                                 0,                                               0, false    , nullptr       },
-	{ &g_extendVotesPercent,          "g_extendVotesPercent",          "74",                               0,                                               0, false    , nullptr       },
-	{ &g_extendVotesTime,             "g_extendVotesTime",             "10",                               0,                                               0, false    , nullptr       },
-	{ &g_kickVotesPercent,            "g_kickVotesPercent",            "51",                               0,                                               0, true     , nullptr       },
-	{ &g_denyVotesPercent,            "g_denyVotesPercent",            "51",                               0,                                               0, true     , nullptr       },
-	{ &g_mapVotesPercent,             "g_mapVotesPercent",             "51",                               0,                                               0, true     , nullptr       },
-	{ &g_mapVotesBefore,              "g_mapVotesBefore",              "5",                                0,                                               0, true     , nullptr       },
-	{ &g_nextMapVotesPercent,         "g_nextMapVotesPercent",         "51",                               0,                                               0, true     , nullptr       },
-	{ &g_drawVotesPercent,            "g_drawVotesPercent",            "51",                               0,                                               0, true     , nullptr       },
-	{ &g_drawVotesAfter,              "g_drawVotesAfter",              "0",                                0,                                               0, true     , nullptr       },
-	{ &g_drawVoteReasonRequired,      "g_drawVoteReasonRequired",      "0",                                0,                                               0, true     , nullptr       },
-	{ &g_admitDefeatVotesPercent,     "g_admitDefeatVotesPercent",     "74",                               0,                                               0, true     , nullptr       },
-	{ &g_pollVotesPercent,            "g_pollVotesPercent",            "0",                                0,                                               0, true     , nullptr       },
-	{ &g_botKickVotesAllowed,         "g_botKickVotesAllowed",         "1",                                0,                                               0, true     , nullptr       },
-	{ &g_botKickVotesAllowedThisMap,  "g_botKickVotesAllowedThisMap",  "1",                                0,                                               0, true     , nullptr       },
-
-	// clients: misc
-	{ &g_geoip,                       "g_geoip",                       "1",                                0,                                               0, false    , nullptr       },
-	{ &g_unnamedNumbering,            "g_unnamedNumbering",            "-1",                               0,                                               0, false    , nullptr       },
-	{ &g_unnamedNamePrefix,           "g_unnamedNamePrefix",           UNNAMED_PLAYER"#",                  0,                                               0, false    , nullptr       },
-
-	// admin system
-	{ &g_admin,                       "g_admin",                       "admin.dat",                        0,                                               0, false    , nullptr       },
-	{ &g_adminWarn,                   "g_adminWarn",                   "1h",                               0,                                               0, false    , nullptr       },
-	{ &g_adminTempBan,                "g_adminTempBan",                "2m",                               0,                                               0, false    , nullptr       },
-	{ &g_adminMaxBan,                 "g_adminMaxBan",                 "2w",                               0,                                               0, false    , nullptr       },
-	{ &g_adminRetainExpiredBans,      "g_adminRetainExpiredBans",      "1",                                0,                                               0, false    , nullptr       },
-	{ &g_publicAdminMessages,         "g_publicAdminMessages",         "1",                                0,                                               0, false    , nullptr       },
-
-	// logging
-	{ &g_logFile,                     "g_logFile",                     "games.log",                        0,                                               0, false    , nullptr       },
-	{ &g_logGameplayStatsFrequency,   "g_logGameplayStatsFrequency",   "10",                               0,                                               0, false    , nullptr       },
-	{ &g_logFileSync,                 "g_logFileSync",                 "0",                                0,                                               0, false    , nullptr       },
-
-	// maps, layouts & rotation
-	{ &g_currentMapRotation,          "g_currentMapRotation",          "-1",                               0,                                               0, false    , nullptr       },
-	{ &g_mapRotationNodes,            "g_mapRotationNodes",            "",                                 0,                                               0, false    , nullptr       },
-	{ &g_mapRotationStack,            "g_mapRotationStack",            "",                                 0,                                               0, false    , nullptr       },
-	{ &g_nextMap,                     "g_nextMap",                     "",                                 0,                                               0, true     , nullptr       },
-	{ &g_nextMapLayouts,              "g_nextMapLayouts",              "",                                 0,                                               0, true     , nullptr       },
-	{ &g_initialMapRotation,          "g_initialMapRotation",          "rotation1",                        0,                                               0, false    , nullptr       },
-	{ &g_mapLog,                      "g_mapLog",                      "",                                 0,                                               0, false    , nullptr       },
-	{ &g_mapStartupMessageDelay,      "g_mapStartupMessageDelay",      "5000",                             CVAR_LATCH,                                      0, false    , nullptr       },
-	{ &g_mapConfigs,                  "g_mapConfigs",                  "",                                 0,                                               0, false    , nullptr       },
-	{ &g_defaultLayouts,              "g_defaultLayouts",              "",                                 CVAR_LATCH,                                      0, false    , nullptr       },
-	{ &g_layouts,                     "g_layouts",                     "",                                 CVAR_LATCH,                                      0, false    , nullptr       },
-	{ &g_layoutAuto,                  "g_layoutAuto",                  "0",                                0,                                               0, false    , nullptr       },
-
-	// debug switches
-	{ &g_debugMove,                   "g_debugMove",                   "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugDamage,                 "g_debugDamage",                 "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugKnockback,              "g_debugKnockback",              "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugTurrets,                "g_debugTurrets",                "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugMomentum,               "g_debugMomentum",               "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugMapRotation,            "g_debugMapRotation",            "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugVoices,                 "g_debugVoices",                 "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugEntities,               "g_debugEntities",               "0",                                0,                                               0, false    , nullptr       },
-	{ &g_debugFire,                   "g_debugFire",                   "0",                                0,                                               0, false    , nullptr       },
-
-	// gameplay: basic
-	{ &g_timelimit,                   "timelimit",                     "45",                               CVAR_SERVERINFO,                                 0, true     , nullptr       },
-	{ &g_friendlyFire,                "g_friendlyFire",                "1",                                CVAR_SERVERINFO,                                 0, true     , nullptr       },
-	{ &g_friendlyBuildableFire,       "g_friendlyBuildableFire",       "1",                                CVAR_SERVERINFO,                                 0, true     , nullptr       },
-
-	// gameplay: team balance
-	{ &g_teamForceBalance,            "g_teamForceBalance",            "0",                                0,                                               0, true     , nullptr       },
-	{ &g_teamImbalanceWarnings,       "g_teamImbalanceWarnings",       "30",                               0,                                               0, false    , nullptr       },
-	{ &g_warmup,                      "g_warmup",                      "10",                               0,                                               0, true     , nullptr       },
-	{ &g_doWarmup,                    "g_doWarmup",                    "0",                                0,                                               0, true     , nullptr       },
-
-	// gameplay: mining
-	{ &g_buildPointRecoveryInititalRate, "g_BPRecoveryInitialRate",    DEFAULT_BP_RECOVERY_INITIAL_RATE,   CVAR_SERVERINFO,                                 0, false    , nullptr       },
-	{ &g_buildPointRecoveryRateHalfLife, "g_BPRecoveryRateHalfLife",   DEFAULT_BP_RECOVERY_RATE_HALF_LIFE, CVAR_SERVERINFO,                                 0, false    , nullptr       },
-
-	// gameplay: momentum
-	{ &g_unlockableMinTime,           "g_unlockableMinTime",           DEFAULT_UNLOCKABLE_MIN_TIME,        CVAR_SERVERINFO,                                 0, false    , nullptr       },
-	{ &g_momentumHalfLife,            "g_momentumHalfLife",            DEFAULT_MOMENTUM_HALF_LIFE,         CVAR_SERVERINFO,                                 0, false    , nullptr       },
-	{ &g_momentumRewardDoubleTime,    "g_momentumRewardDoubleTime",    DEFAULT_CONF_REWARD_DOUBLE_TIME,    0,                                               0, false    , nullptr       },
-	{ &g_momentumBaseMod,             "g_momentumBaseMod",             DEFAULT_MOMENTUM_BASE_MOD,          0,                                               0, false    , nullptr       },
-	{ &g_momentumKillMod,             "g_momentumKillMod",             DEFAULT_MOMENTUM_KILL_MOD,          0,                                               0, false    , nullptr       },
-	{ &g_momentumBuildMod,            "g_momentumBuildMod",            DEFAULT_MOMENTUM_BUILD_MOD,         0,                                               0, false    , nullptr       },
-	{ &g_momentumDeconMod,            "g_momentumDeconMod",            DEFAULT_MOMENTUM_DECON_MOD,         0,                                               0, false    , nullptr       },
-	{ &g_momentumDestroyMod,          "g_momentumDestroyMod",          DEFAULT_MOMENTUM_DESTROY_MOD,       0,                                               0, false    , nullptr       },
-
-	// gameplay: limits
-	{ &g_humanAllowBuilding,          "g_humanAllowBuilding",          "1",                                0,                                               0, false    , nullptr       },
-	{ &g_alienAllowBuilding,          "g_alienAllowBuilding",          "1",                                0,                                               0, false    , nullptr       },
-	{ &g_disabledEquipment,           "g_disabledEquipment",           "",                                 CVAR_SYSTEMINFO,                                 0, false    , nullptr       },
-	{ &g_disabledClasses,             "g_disabledClasses",             "",                                 CVAR_SYSTEMINFO,                                 0, false    , nullptr       },
-	{ &g_disabledBuildables,          "g_disabledBuildables",          "",                                 CVAR_SYSTEMINFO,                                 0, false    , nullptr       },
-
-	// gameplay: misc
-	{ &g_alienOffCreepRegenHalfLife,  "g_alienOffCreepRegenHalfLife",  "0",                                0,                                               0, false    , nullptr       },
-	{ &g_freeFundPeriod,              "g_freeFundPeriod",              DEFAULT_FREEKILL_PERIOD,            0,                                               0, true     , nullptr       },
-	{ &g_sayAreaRange,                "g_sayAreaRange",                "1000",                             0,                                               0, true     , nullptr       },
-	{ &g_speed,                       "g_speed",                       "320",                              0,                                               0, true     , nullptr       },
-	{ &g_gravity,                     "g_gravity",                     "800",                              0,                                               0, true, cv_gravity},
-	{ &g_antiSpawnBlock,              "g_antiSpawnBlock",              "0",                                0,                                               0, false    , nullptr       },
-	{ &g_shove,                       "g_shove",                       "0.0",                              0,                                               0, false    , nullptr       },
-	{ &g_dretchPunt,                  "g_dretchPunt",                  "1",                                0,                                               0, true     , nullptr       },
-	{ &g_allowTeamOverlay,            "g_allowTeamOverlay",            "1",                                0,                                               0, true     , nullptr       },
-	{ &g_showKillerHP,                "g_showKillerHP",                "0",                                0,                                               0, false    , nullptr       },
-	{ &g_combatCooldown,              "g_combatCooldown",              "15",                               0,                                               0, false    , nullptr       },
-
-	{ &g_instantBuilding,             "g_instantBuilding",             "0",                                0,                                               0, true     , nullptr       },
-
-	{ &g_emptyTeamsSkipMapTime,       "g_emptyTeamsSkipMapTime",       "0",                                0,                                               0, true     , nullptr       },
-
-	// bots: buying
-	{ &g_bot_buy, "g_bot_buy", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_rifle, "g_bot_rifle", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_painsaw, "g_bot_painsaw", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_shotgun, "g_bot_shotgun", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_lasgun, "g_bot_lasgun", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_mdriver, "g_bot_mdriver", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_chaingun, "g_bot_chain", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_prifle, "g_bot_prifle", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_flamer, "g_bot_flamer", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_lcannon, "g_bot_lcannon", "1",  CVAR_NORESTART, 0, false, nullptr },
-
-	// bots: evolution
-	{ &g_bot_evolve, "g_bot_evolve", "1", CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_level1, "g_bot_level1", "1", CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_level2, "g_bot_level2", "1", CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_level2upg, "g_bot_level2upg", "1", CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_level3, "g_bot_level3", "1", CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_level3upg, "g_bot_level3upg", "1", CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_level4, "g_bot_level4", "1", CVAR_NORESTART, 0, false, nullptr },
-
-	// bots: misc
-	{ &g_bot_attackStruct, "g_bot_attackStruct", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_roam, "g_bot_roam", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_rush, "g_bot_rush", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_repair, "g_bot_repair", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_build, "g_bot_build", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_retreat, "g_bot_retreat", "1",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_fov, "g_bot_fov", "125",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_chasetime, "g_bot_chasetime", "5000",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_reactiontime, "g_bot_reactiontime", "500",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_infinite_funds, "g_bot_infinite_funds", "0",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_numInGroup, "g_bot_numInGroup", "3",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_debug, "g_bot_debug", "0",  CVAR_NORESTART, 0, false, nullptr },
-	{ &g_bot_buildLayout, "g_bot_buildLayout", "botbuild",  CVAR_NORESTART, 0, false, nullptr }
-};
-
-static const size_t gameCvarTableSize = ARRAY_LEN( gameCvarTable );
+// TODO why is this needed?
+static Cvar::Cvar<bool> g_mapConfigsLoaded("g_mapConfigsLoaded", "FOR INTERNAL USE", Cvar::NONE, false);
 
 void               CheckExitRules();
 static void        G_LogGameplayStats( int state );
@@ -526,6 +348,7 @@ void G_FindEntityGroups()
 
 	Log::Notice( "%i groups with %i entities", groupCount, entityCount );
 }
+
 /*
 ================
 G_InitSetEntities
@@ -545,112 +368,6 @@ void G_InitSetEntities()
 	}
 }
 
-static int cvarCompare( const void *a, const void *b )
-{
-	cvarTable_t *ac = ( cvarTable_t * ) a;
-	cvarTable_t *bc = ( cvarTable_t * ) b;
-	return Q_stricmp( ac->cvarName, bc->cvarName );
-}
-
-/*
-=================
-G_RegisterCvars
-=================
-*/
-void G_RegisterCvars()
-{
-	unsigned i;
-	cvarTable_t *cvarTable;
-
-	// sort the table for fast lookup
-	qsort( gameCvarTable, gameCvarTableSize, sizeof( *gameCvarTable ), cvarCompare );
-
-	for ( i = 0, cvarTable = gameCvarTable; i < gameCvarTableSize; i++, cvarTable++ )
-	{
-		trap_Cvar_Register( cvarTable->vmCvar, cvarTable->cvarName,
-		                    cvarTable->defaultString, cvarTable->cvarFlags );
-
-		if ( cvarTable->vmCvar )
-		{
-			cvarTable->modificationCount = cvarTable->vmCvar->modificationCount;
-
-			if ( cvarTable->explicit_ )
-			{
-				strcpy( cvarTable->explicit_, cvarTable->vmCvar->string );
-			}
-		}
-	}
-}
-
-/*
-=================
-G_UpdateCvars
-=================
-*/
-void G_UpdateCvars()
-{
-	unsigned i;
-	cvarTable_t *cv;
-
-	for ( i = 0, cv = gameCvarTable; i < gameCvarTableSize; i++, cv++ )
-	{
-		if ( cv->vmCvar )
-		{
-			trap_Cvar_Update( cv->vmCvar );
-
-			if ( cv->modificationCount != cv->vmCvar->modificationCount )
-			{
-				cv->modificationCount = cv->vmCvar->modificationCount;
-
-				if ( cv->trackChange )
-				{
-					trap_SendServerCommand( -1, va( "print_tr %s %s %s", QQ( N_("Server: $1$ changed to $2$") ),
-					                                Quote( cv->cvarName ), Quote( cv->vmCvar->string ) ) );
-				}
-
-				if ( !level.spawning && cv->explicit_ )
-				{
-					strcpy( cv->explicit_, cv->vmCvar->string );
-				}
-			}
-		}
-	}
-}
-
-/*
-=================
-G_RestoreCvars
-=================
-*/
-void G_RestoreCvars()
-{
-	unsigned i;
-	cvarTable_t *cv;
-
-	for ( i = 0, cv = gameCvarTable; i < gameCvarTableSize; i++, cv++ )
-	{
-		if ( cv->vmCvar && cv->explicit_ )
-		{
-			trap_Cvar_Set( cv->cvarName, cv->explicit_ );
-		}
-	}
-}
-
-vmCvar_t *G_FindCvar( const char *name )
-{
-	cvarTable_t *c = nullptr;
-	cvarTable_t comp;
-	comp.cvarName = name;
-	c = ( cvarTable_t * ) bsearch( &comp, gameCvarTable, gameCvarTableSize, sizeof( *gameCvarTable ), cvarCompare );
-
-	if ( !c )
-	{
-		return nullptr;
-	}
-
-	return c->vmCvar;
-}
-
 /*
 =================
 G_MapConfigs
@@ -658,21 +375,21 @@ G_MapConfigs
 */
 void G_MapConfigs( const char *mapname )
 {
-	if ( !g_mapConfigs.string[ 0 ] )
+	if ( g_mapConfigs.Get().empty() )
 	{
 		return;
 	}
 
-	if ( trap_Cvar_VariableIntegerValue( "g_mapConfigsLoaded" ) )
+	if ( g_mapConfigsLoaded.Get() )
 	{
 		return;
 	}
 
-	trap_SendConsoleCommand( va( "exec %s/default.cfg", Quote( g_mapConfigs.string ) ) );
+	trap_SendConsoleCommand( va( "exec %s/default.cfg", Quote( g_mapConfigs.Get().c_str() ) ) );
 
-	trap_SendConsoleCommand( va( "exec %s/%s.cfg", Quote( g_mapConfigs.string ), Quote( mapname ) ) );
+	trap_SendConsoleCommand( va( "exec %s/%s.cfg", Quote( g_mapConfigs.Get().c_str() ), Quote( mapname ) ) );
 
-	trap_Cvar_Set( "g_mapConfigsLoaded", "1" );
+	g_mapConfigsLoaded.Set(true);
 	trap_SendConsoleCommand( "maprestarted" );
 }
 
@@ -688,8 +405,6 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 
 	srand( randomSeed );
 
-	G_RegisterCvars();
-
 	Log::Notice( "------- Game Initialization -------" );
 	Log::Notice( "gamename: %s", GAME_VERSION );
 	Log::Notice( "gamedate: %s", __DATE__ );
@@ -702,20 +417,20 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 	level.snd_fry = G_SoundIndex( "sound/misc/fry" );  // FIXME standing in lava / slime
 
 	// TODO: Move this in a seperate function
-	if ( g_logFile.string[ 0 ] )
+	if ( !g_logFile.Get().empty() )
 	{
-		if ( g_logFileSync.integer )
+		if ( g_logFileSync.Get() )
 		{
-			trap_FS_FOpenFile( g_logFile.string, &level.logFile, fsMode_t::FS_APPEND_SYNC );
+			trap_FS_FOpenFile( g_logFile.Get().c_str(), &level.logFile, fsMode_t::FS_APPEND_SYNC );
 		}
 		else
 		{
-			trap_FS_FOpenFile( g_logFile.string, &level.logFile, fsMode_t::FS_APPEND );
+			trap_FS_FOpenFile( g_logFile.Get().c_str(), &level.logFile, fsMode_t::FS_APPEND );
 		}
 
 		if ( !level.logFile )
 		{
-			Log::Warn("Couldn't open logfile: %s", g_logFile.string );
+			Log::Warn("Couldn't open logfile: %s", g_logFile.Get() );
 		}
 		else
 		{
@@ -740,7 +455,7 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 
 	// gameplay statistics logging
 	// TODO: Move this in a seperate function
-	if ( g_logGameplayStatsFrequency.integer > 0 )
+	if ( g_logGameplayStatsFrequency.Get() > 0 )
 	{
 		char    logfile[ 128 ], mapname[ 64 ];
 		qtime_t qt;
@@ -766,12 +481,8 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 		}
 	}
 
-	// initialise whether bot vote kicks are allowed. the map rotation may clear this flag.
-	trap_Cvar_Set( "g_botKickVotesAllowedThisMap", g_botKickVotesAllowed.integer ? "1" : "0" );
-
-	// clear these now; they'll be set, if needed, from rotation
-	trap_Cvar_Set( "g_mapStartupMessage", "" );
-	trap_Cvar_Set( "g_disabledVoteCalls", "" );
+	// clear this now; it'll be set, if needed, from rotation
+	g_mapStartupMessage.Set("");
 
 	// retrieve map name and load per-map configuration
 	{
@@ -785,7 +496,7 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 	BG_InitAllConfigs();
 
 	// we're done with g_mapConfigs, so reset this for the next map
-	trap_Cvar_Set( "g_mapConfigsLoaded", "0" );
+	g_mapConfigsLoaded.Set(false);
 
 	G_RegisterCommands();
 	G_admin_readconfig( nullptr );
@@ -802,7 +513,10 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 	G_InitGentityMinimal( g_entities + ENTITYNUM_WORLD );
 
 	// initialize all clients for this game
-	level.maxclients = g_maxclients.integer;
+	if (!Cvar::ParseCvarValue(Cvar::GetValue("sv_maxclients"), level.maxclients))
+	{
+		ASSERT_UNREACHABLE();
+	}
 	memset( g_clients, 0, MAX_CLIENTS * sizeof( g_clients[ 0 ] ) );
 	level.clients = g_clients;
 
@@ -823,16 +537,15 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 
 	// let the server system know where the entites are
 	trap_LocateGameData( level.num_entities, sizeof( gentity_t ),
-	                     &level.clients[ 0 ].ps, sizeof( level.clients[ 0 ] ) );
+	                     sizeof( level.clients[ 0 ] ) );
 
-	level.emoticonCount = BG_LoadEmoticons( level.emoticons, MAX_EMOTICONS );
+	BG_LoadEmoticons();
 
 	trap_SetConfigstring( CS_INTERMISSION, "0" );
 
 	// test to see if a custom buildable layout will be loaded
 	G_LayoutSelect();
 
-	// this has to be flipped after the first UpdateCvars
 	level.spawning = true;
 
 	// parse the key/value pairs and spawn gentities
@@ -849,9 +562,6 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 	// setup bot code
 	G_BotInit();
 
-	// the map might disable some things
-	BG_InitAllowedGameElements();
-
 	// Initialize item locking state
 	BG_InitUnlockackables();
 
@@ -867,13 +577,13 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 	G_InitSpawnQueue( &level.team[ TEAM_ALIENS ].spawnQueue );
 	G_InitSpawnQueue( &level.team[ TEAM_HUMANS ].spawnQueue );
 
-	if ( g_debugMapRotation.integer )
+	if ( g_debugMapRotation.Get() )
 	{
 		G_PrintRotations();
 	}
 
 	level.voices = BG_VoiceInit();
-	BG_PrintVoices( level.voices, g_debugVoices.integer );
+	BG_PrintVoices( level.voices, g_debugVoices.Get() );
 
 	// Spend build points for layout buildables.
 	for (team_t team = TEAM_NONE; (team = G_IterateTeams(team)); ) {
@@ -886,11 +596,11 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 
 	G_MapLog_NewMap();
 
-	if ( g_lockTeamsAtStart.integer )
+	if ( g_lockTeamsAtStart.Get() )
 	{
 		level.team[ TEAM_ALIENS ].locked = true;
 		level.team[ TEAM_HUMANS ].locked = true;
-		trap_Cvar_Set( "g_lockTeamsAtStart", "0" );
+		g_lockTeamsAtStart.Set(false);
 	}
 
 	G_notify_sensor_start();
@@ -953,8 +663,6 @@ void G_ShutdownGame( int /* restart */ )
 	// in case of a map_restart
 	G_ClearVotes( true );
 
-	G_RestoreCvars();
-
 	Log::Notice( "==== ShutdownGame ====" );
 
 	if ( level.logFile )
@@ -1006,34 +714,25 @@ void G_ShutdownGame( int /* restart */ )
 //===================================================================
 
 void G_CheckPmoveParamChanges() {
-	if ( pmove_msec.integer < 8 )
-	{
-		trap_Cvar_Set( "pmove_msec", "8" );
-	}
-	else if ( pmove_msec.integer > 33 )
-	{
-		trap_Cvar_Set( "pmove_msec", "33" );
-	}
-
 	if(not level.pmoveParams.initialized or
-			level.pmoveParams.synchronous != g_synchronousClients.integer or
-			level.pmoveParams.msec != pmove_msec.integer or
-			level.pmoveParams.fixed != pmove_fixed.integer or
-			level.pmoveParams.accurate != pmove_accurate.integer) {
+			level.pmoveParams.synchronous != g_synchronousClients.Get() or
+			level.pmoveParams.msec != pmove_msec.Get() or
+			level.pmoveParams.fixed != pmove_fixed.Get() or
+			level.pmoveParams.accurate != pmove_accurate.Get()) {
 		level.pmoveParams.initialized = true;
-		level.pmoveParams.synchronous = g_synchronousClients.integer;
-		level.pmoveParams.msec = pmove_msec.integer;
-		level.pmoveParams.fixed = pmove_fixed.integer;
-		level.pmoveParams.accurate = pmove_accurate.integer;
+		level.pmoveParams.synchronous = g_synchronousClients.Get();
+		level.pmoveParams.msec = pmove_msec.Get();
+		level.pmoveParams.fixed = pmove_fixed.Get();
+		level.pmoveParams.accurate = pmove_accurate.Get();
 		G_SendClientPmoveParams(-1);
 	}
 }
 void G_SendClientPmoveParams(int client) {
 	trap_SendServerCommand(client, va("pmove_params %i %i %i %i",
 		level.pmoveParams.synchronous,
-		level.pmoveParams.fixed,
+		+level.pmoveParams.fixed,
 		level.pmoveParams.msec,
-		level.pmoveParams.accurate));
+		+level.pmoveParams.accurate));
 }
 
 /*
@@ -1050,7 +749,7 @@ SortRanks
 
 =============
 */
-int QDECL SortRanks( const void *a, const void *b )
+int SortRanks( const void *a, const void *b )
 {
 	gclient_t *ca, *cb;
 
@@ -1327,7 +1026,7 @@ void G_SpawnClients( team_t team )
 	spawnQueue_t *sq = nullptr;
 	int          numSpawns = 0;
 
-	ASSERT(team == TEAM_ALIENS || team == TEAM_HUMANS);
+	ASSERT( G_IsPlayableTeam( team ) );
 	sq = &level.team[ team ].spawnQueue;
 
 	numSpawns = level.team[ team ].numSpawns;
@@ -1415,6 +1114,8 @@ This will be called on every client connect, begin, disconnect, death,
 and team change.
 ============
 */
+static Cvar::Cvar<std::string> slotTeams("P", "[serverinfo] client slot -> team", Cvar::SERVERINFO, "");
+static Cvar::Cvar<std::string> slotBots("P", "[serverinfo] client slot -> is bot", Cvar::SERVERINFO, "");
 void CalculateRanks()
 {
 	int  clientNum;
@@ -1508,10 +1209,10 @@ void CalculateRanks()
 	level.team[ TEAM_NONE ].numPlayers += level.numPlayingPlayers;
 
 	P[ clientNum ] = '\0';
-	trap_Cvar_Set( "P", P );
+	slotTeams.Set(P);
 
 	B[ clientNum ] = '\0';
-	trap_Cvar_Set( "B", B );
+	slotBots.Set(B);
 
 	qsort( level.sortedClients, level.numConnectedClients,
 	       sizeof( level.sortedClients[ 0 ] ), SortRanks );
@@ -1690,14 +1391,14 @@ void ExitLevel()
 	trap_Cvar_VariableStringBuffer( "mapname", currentMapName, sizeof( currentMapName ) );
 
 	// Restart if map is the same
-	if ( !Q_stricmp( currentMapName, g_nextMap.string ) )
+	if ( !Q_stricmp( currentMapName, g_nextMap.Get().c_str() ) )
 	{
-		trap_Cvar_Set( "g_layouts", g_nextMapLayouts.string );
+		g_layouts.Set( g_nextMapLayouts.Get() );
 		trap_SendConsoleCommand( "map_restart" );
 	}
-	else if ( G_MapExists( g_nextMap.string ) )
+	else if ( G_MapExists( g_nextMap.Get().c_str() ) )
 	{
-		trap_SendConsoleCommand( va( "map %s %s", Quote( g_nextMap.string ), Quote( g_nextMapLayouts.string ) ) );
+		trap_SendConsoleCommand( va( "map %s %s", Quote( g_nextMap.Get().c_str() ), Quote( g_nextMapLayouts.Get().c_str() ) ) );
 	}
 	else if ( G_MapRotationActive() )
 	{
@@ -1708,7 +1409,7 @@ void ExitLevel()
 		trap_SendConsoleCommand( "map_restart" );
 	}
 
-	trap_Cvar_Set( "g_nextMap", "" );
+	g_nextMap.Set("");
 
 	level.restarted = true;
 	level.changemap = nullptr;
@@ -1782,7 +1483,7 @@ Print to the logfile with a time stamp if it is open, and to the server console.
 Will append a newline for you.
 =================
 */
-void QDECL PRINTF_LIKE(1) G_LogPrintf( const char *fmt, ... )
+void PRINTF_LIKE(1) G_LogPrintf( const char *fmt, ... )
 {
 	va_list argptr;
 	char    string[ 1024 ], decolored[ 1024 ];
@@ -1855,7 +1556,7 @@ static void GetAverageCredits( int teamCredits[], int teamValue[] )
 		team = client->pers.team;
 
 		teamCredits[ team ] += client->pers.credit;
-		teamValue[ team ] += BG_GetValueOfPlayer( &client->ps );
+		teamValue[ team ] += BG_GetPlayerValue( client->ps );
 		teamCnt[ team ]++;
 	}
 
@@ -1904,7 +1605,7 @@ static void G_LogGameplayStats( int state )
 			             "# Time:    %02i:%02i:%02i\n"
 			             "# Format:  %i\n"
 			             "#\n"
-			             "# g_momentumHalfLife:        %4i\n"
+			             "# g_momentumHalfLife:        %4g\n"
 			             "# g_initialBuildPoints:      %4i\n"
 			             "# g_budgetPerMiner:          %4i\n"
 			             "#\n"
@@ -1916,7 +1617,7 @@ static void G_LogGameplayStats( int state )
 			             t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
 			             t.tm_hour, t.tm_min, t.tm_sec,
 			             LOG_GAMEPLAY_STATS_VERSION,
-			             g_momentumHalfLife.integer,
+			             g_momentumHalfLife.Get(),
 			             g_buildPointInitialBudget.Get(),
 			             g_buildPointBudgetPerMiner.Get() );
 
@@ -2009,7 +1710,7 @@ static void G_LogGameplayStats( int state )
 
 	if ( state == LOG_GAMEPLAY_STATS_BODY )
 	{
-		nextCalculation = level.time + std::max( 1, g_logGameplayStatsFrequency.integer ) * 1000;
+		nextCalculation = level.time + std::max( 1, g_logGameplayStatsFrequency.Get() ) * 1000;
 	}
 	else
 	{
@@ -2097,7 +1798,7 @@ void CheckIntermissionExit()
 	// see which players are ready
 	ready = 0;
 	notReady = 0;
-	Com_Memset( &readyMasks, 0, sizeof( readyMasks ) );
+	memset( &readyMasks, 0, sizeof( readyMasks ) );
 
 	for ( i = 0; i < level.maxclients; i++ )
 	{
@@ -2202,7 +1903,7 @@ can see the last frag.
 */
 void CheckExitRules()
 {
-	if ( g_cheats.integer && g_neverEnd.Get() ) {
+	if ( g_cheats && g_neverEnd.Get() ) {
 		return;
 	}
 
@@ -2279,9 +1980,9 @@ void CheckExitRules()
 		LogExit( "Aliens win." );
 		G_MapLog_Result( 'a' );
 	}
-	else if ( g_emptyTeamsSkipMapTime.integer &&
+	else if ( g_emptyTeamsSkipMapTime.Get() &&
 		( level.time - level.startTime ) / 60000 >=
-		g_emptyTeamsSkipMapTime.integer &&
+		g_emptyTeamsSkipMapTime.Get() &&
 		level.team[ TEAM_ALIENS ].numPlayers == 0 && level.team[ TEAM_HUMANS ].numPlayers == 0 )
 	{
 		// nobody wins because the teams are empty after x amount of game time
@@ -2494,31 +2195,12 @@ void G_CheckVote( team_t team )
 	G_ResetVote( team );
 }
 
-/*
-==================
-CheckCvars
-==================
-*/
-void CheckCvars()
+static void SetNeedpass(const std::string& password)
 {
-	static int lastPasswordModCount = -1;
-
-	if ( g_password.modificationCount != lastPasswordModCount )
-	{
-		lastPasswordModCount = g_password.modificationCount;
-
-		if ( *g_password.string && Q_stricmp( g_password.string, "none" ) )
-		{
-			trap_Cvar_Set( "g_needpass", "1" );
-		}
-		else
-		{
-			trap_Cvar_Set( "g_needpass", "0" );
-		}
-	}
-
-	level.frameMsec = trap_Milliseconds();
+	g_needpass.Set( !password.empty() && !Str::IsIEqual( password, "none" ) );
 }
+Cvar::Callback<Cvar::Cvar<std::string>> g_password("password", "password to join the server", Cvar::NONE, "", SetNeedpass);
+
 
 /*
 =============
@@ -2638,6 +2320,18 @@ void G_RunFrame( int levelTime )
 		return;
 	}
 
+	if ( !level.numConnectedPlayers && g_autoPause.Get() && level.matchTime > 1000)
+	{
+		level.time = levelTime;
+		level.matchTime = levelTime - level.startTime;
+
+		level.frameMsec = trap_Milliseconds();
+
+		CheckExitRules();
+
+		return;
+	}
+
 	if ( level.pausedTime )
 	{
 		msec = levelTime - level.time - level.pausedTime;
@@ -2686,9 +2380,7 @@ void G_RunFrame( int levelTime )
 	// generate public-key messages
 	G_admin_pubkey();
 
-	// get any cvar changes
-	G_UpdateCvars();
-	CheckCvars();
+	level.frameMsec = trap_Milliseconds();
 
 	// now we are done spawning
 	level.spawning = false;
@@ -2721,12 +2413,6 @@ void G_RunFrame( int levelTime )
 				// tempEntities or dropped items completely go away after their event
 				G_FreeEntity( ent );
 				continue;
-			}
-			else if ( ent->unlinkAfterEvent )
-			{
-				// items that will respawn will hide themselves after their pickup event
-				ent->unlinkAfterEvent = false;
-				trap_UnlinkEntity( ent );
 			}
 		}
 
@@ -2841,7 +2527,8 @@ void G_RunFrame( int levelTime )
 		G_CheckVote( (team_t) i );
 	}
 
-	trap_BotUpdateObstacles();
+	BotDebugDrawMesh();
+	G_BotUpdateObstacles();
 	level.frameMsec = trap_Milliseconds();
 }
 

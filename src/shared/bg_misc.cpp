@@ -26,9 +26,13 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 // bg_misc.c -- both games misc functions, all completely stateless
 
+#include <stddef.h>
 #include "engine/qcommon/q_shared.h"
+#include "common/FileSystem.h"
 #include "bg_public.h"
+#include "parse.h"
 
+// delayed translation - these strings may be passed to Trans_Gettext() later
 #define N_(x) x
 
 int                                trap_FS_FOpenFile( const char *qpath, fileHandle_t *f, fsMode_t mode );
@@ -135,15 +139,15 @@ void BG_InitBuildableAttributes()
 		ba = &bg_buildableList[i];
 
 		//Initialise default values for buildables
-		Com_Memset( ba, 0, sizeof( buildableAttributes_t ) );
+		memset( ba, 0, sizeof( buildableAttributes_t ) );
 
 		ba->number = bh->number;
 		ba->name = bh->name;
 		ba->entityName = bh->classname;
 
 		ba->traj = trType_t::TR_GRAVITY;
-		ba->bounce = 0.0;
-		ba->minNormal = 0.0;
+		ba->bounce = 0.0f;
+		ba->minNormal = 0.0f;
 
 		BG_ParseBuildableAttributeFile( va( "configs/buildables/%s.attr.cfg", ba->name ), ba );
 	}
@@ -195,7 +199,7 @@ void BG_InitBuildableModelConfigs()
 	for ( i = BA_NONE + 1; i < BA_NUM_BUILDABLES; i++ )
 	{
 		bc = BG_BuildableModelConfig( i );
-		Com_Memset( bc, 0, sizeof( buildableModelConfig_t ) );
+		memset( bc, 0, sizeof( buildableModelConfig_t ) );
 
 		BG_ParseBuildableModelFile( va( "configs/buildables/%s.model.cfg",
 		                           BG_Buildable( i )->name ), bc );
@@ -412,63 +416,68 @@ bool BG_ClassHasAbility( int pClass, int ability )
 
 /*
 ==============
-BG_CostToEvolve
-==============
-*/
-int BG_CostToEvolve( int from, int to )
-{
-	int fromCost, toCost;
-
-	if ( from == to ||
-			 from <= PCL_NONE || from >= PCL_NUM_CLASSES ||
-			 to <= PCL_NONE || to >= PCL_NUM_CLASSES )
-	{
-		return CANT_EVOLVE;
-	}
-
-	fromCost = BG_Class( from )->cost;
-	toCost = BG_Class( to )->cost;
-
-
-	return toCost - fromCost;
-}
-
-/*
-==============
 BG_ClassCanEvolveFromTo
+
+Returns if an evolution is possible (unlocked), and how much
+it would cost. Note that you still need to check if you want
+to allow devolving, or if you can afford the upgrade.
 ==============
 */
-int BG_ClassCanEvolveFromTo( int from, int to, int credits )
+evolveInfo_t BG_ClassEvolveInfoFromTo( const int from, const int to )
 {
+	bool classIsUnlocked;
+	bool isDevolving;
+	int fromCost, toCost;
 	int evolveCost;
 
-	if ( !BG_ClassUnlocked( to ) || BG_ClassDisabled( to ) )
+	if ( from == to ||
+	     from <= PCL_NONE || from >= PCL_NUM_CLASSES ||
+	     to <= PCL_NONE || to >= PCL_NUM_CLASSES )
 	{
-		return CANT_EVOLVE;
+		return { false, false, 0 };
 	}
 
-	evolveCost = BG_CostToEvolve( from, to );
+	classIsUnlocked = BG_ClassUnlocked( to )
+		&& !BG_ClassDisabled( to );
 
-	if ( credits < evolveCost )
+	fromCost = BG_Class( from )->price;
+	toCost = BG_Class( to )->price;
+
+	evolveCost = toCost - fromCost;
+
+	isDevolving = evolveCost <= 0;
+	// exception for peolpe evolving to dretch
+	if ( ( from == PCL_ALIEN_BUILDER0 || from == PCL_ALIEN_BUILDER0_UPG ) && to == PCL_ALIEN_LEVEL0 ) {
+		isDevolving = false;
+	}
+	// and to adv granger
+	if ( from == PCL_ALIEN_BUILDER0 && to == PCL_ALIEN_BUILDER0_UPG )
 	{
-		return CANT_EVOLVE;
+		isDevolving = false;
 	}
 
-	return evolveCost;
+	return { classIsUnlocked, isDevolving, evolveCost };
 }
 
 /*
 ==============
 BG_AlienCanEvolve
+
+answers true if the alien can evolve to any other form.
+
+FIXME: this function will always return true because it will notice you can
+       devolve to dretch or granger, even when far from the overmind
 ==============
 */
 bool BG_AlienCanEvolve( int from, int credits )
 {
 	int to;
+	evolveInfo_t info;
 
 	for ( to = PCL_NONE + 1; to < PCL_NUM_CLASSES; to++ )
 	{
-		if ( BG_ClassCanEvolveFromTo( from, to, credits ) != CANT_EVOLVE )
+		info = BG_ClassEvolveInfoFromTo( from, to );
+		if ( info.classIsUnlocked && credits >= info.evolveCost )
 		{
 			return true;
 		}
@@ -523,6 +532,7 @@ void BG_InitClassAttributes()
 		ca->bob = 0.0f;
 		ca->bobCycle = 0.0f;
 		ca->abilities = 0;
+		ca->sprintMod = 1.0f;
 
 		BG_ParseClassAttributeFile( va( "configs/classes/%s.attr.cfg", ca->name ), ca );
 	}
@@ -642,7 +652,7 @@ void BG_InitWeaponAttributes()
 		wd = &bg_weaponsData[i];
 		wa = &bg_weapons[i];
 
-		Com_Memset( wa, 0, sizeof( weaponAttributes_t ) );
+		memset( wa, 0, sizeof( weaponAttributes_t ) );
 
 		wa->number = wd->number;
 		wa->name   = wd->name;
@@ -731,7 +741,7 @@ void BG_InitUpgradeAttributes()
 		ua = &bg_upgrades[i];
 
 		//Initialise default values for buildables
-		Com_Memset( ua, 0, sizeof( upgradeAttributes_t ) );
+		memset( ua, 0, sizeof( upgradeAttributes_t ) );
 
 		ua->number = ud->number;
 		ua->name = ud->name;
@@ -799,6 +809,12 @@ const missileAttributes_t *BG_Missile( int missile )
 	       &bg_missiles[ missile - 1 ] : &nullMissile;
 }
 
+void BG_MissileBounds( const missileAttributes_t *ma, vec3_t mins, vec3_t maxs )
+{
+	mins[ 0 ] = mins[ 1 ] = mins[ 2 ] = -ma->size;
+	maxs[ 0 ] = maxs[ 1 ] = maxs[ 2 ] = ma->size;
+}
+
 /*
 ===============
 BG_InitMissileAttributes
@@ -814,14 +830,13 @@ void BG_InitMissileAttributes()
 		md = &bg_missilesData[i];
 		ma = &bg_missiles[i];
 
-		Com_Memset( ma, 0, sizeof( missileAttributes_t ) );
+		memset( ma, 0, sizeof( missileAttributes_t ) );
 
 		ma->name   = md->name;
 		ma->number = md->number;
 
-		// for simplicity, read both from a single file
-		BG_ParseMissileAttributeFile( va( "configs/missiles/%s.missile.cfg", ma->name ), ma );
-		BG_ParseMissileDisplayFile(   va( "configs/missiles/%s.missile.cfg", ma->name ), ma );
+		BG_ParseMissileAttributeFile( va( "configs/missiles/%s.attr.cfg", ma->name ), ma );
+		BG_ParseMissileDisplayFile(   va( "configs/missiles/%s.model.cfg", ma->name ), ma );
 	}
 }
 
@@ -835,7 +850,6 @@ struct meansOfDeathData_t
 
 static const meansOfDeathData_t bg_meansOfDeathData[] =
 {
-	{ MOD_ABUILDER_CLAW, "MOD_ABUILDER_CLAW" },
 	{ MOD_UNKNOWN, "MOD_UNKNOWN" },
 	{ MOD_SHOTGUN, "MOD_SHOTGUN" },
 	{ MOD_BLASTER, "MOD_BLASTER" },
@@ -977,7 +991,7 @@ void BG_InitBeaconAttributes()
 		bd = bg_beaconsData + i;
 		ba = bg_beacons + i;
 
-		Com_Memset( ba, 0, sizeof( beaconAttributes_t ) );
+		memset( ba, 0, sizeof( beaconAttributes_t ) );
 
 		ba->number = bd->number;
 		ba->name = bd->name;
@@ -1120,13 +1134,13 @@ void BG_EvaluateTrajectory( const trajectory_t *tr, int atTime, vec3_t result )
 			break;
 
 		case trType_t::TR_LINEAR:
-			deltaTime = ( atTime - tr->trTime ) * 0.001; // milliseconds to seconds
+			deltaTime = ( atTime - tr->trTime ) * 0.001f; // milliseconds to seconds
 			VectorMA( tr->trBase, deltaTime, tr->trDelta, result );
 			break;
 
 		case trType_t::TR_SINE:
 			deltaTime = ( atTime - tr->trTime ) / ( float ) tr->trDuration;
-			phase = sin( deltaTime * M_PI * 2 );
+			phase = sinf( deltaTime * M_PI * 2 );
 			VectorMA( tr->trBase, phase, tr->trDelta, result );
 			break;
 
@@ -1136,26 +1150,26 @@ void BG_EvaluateTrajectory( const trajectory_t *tr, int atTime, vec3_t result )
 				atTime = tr->trTime + tr->trDuration;
 			}
 
-			deltaTime = ( atTime - tr->trTime ) * 0.001; // milliseconds to seconds
+			deltaTime = ( atTime - tr->trTime ) * 0.001f; // milliseconds to seconds
 
-			if ( deltaTime < 0 )
+			if ( deltaTime < 0.0f )
 			{
-				deltaTime = 0;
+				deltaTime = 0.0f;
 			}
 
 			VectorMA( tr->trBase, deltaTime, tr->trDelta, result );
 			break;
 
 		case trType_t::TR_GRAVITY:
-			deltaTime = ( atTime - tr->trTime ) * 0.001; // milliseconds to seconds
+			deltaTime = ( atTime - tr->trTime ) * 0.001f; // milliseconds to seconds
 			VectorMA( tr->trBase, deltaTime, tr->trDelta, result );
-			result[ 2 ] -= 0.5 * DEFAULT_GRAVITY * deltaTime * deltaTime; // FIXME: local gravity...
+			result[ 2 ] -= 0.5f * DEFAULT_GRAVITY * deltaTime * deltaTime; // FIXME: local gravity...
 			break;
 
 		case trType_t::TR_BUOYANCY:
-			deltaTime = ( atTime - tr->trTime ) * 0.001; // milliseconds to seconds
+			deltaTime = ( atTime - tr->trTime ) * 0.001f; // milliseconds to seconds
 			VectorMA( tr->trBase, deltaTime, tr->trDelta, result );
-			result[ 2 ] += 0.5 * DEFAULT_GRAVITY * deltaTime * deltaTime; // FIXME: local gravity...
+			result[ 2 ] += 0.5f * DEFAULT_GRAVITY * deltaTime * deltaTime; // FIXME: local gravity...
 			break;
 
 		default:
@@ -1188,7 +1202,7 @@ void BG_EvaluateTrajectoryDelta( const trajectory_t *tr, int atTime, vec3_t resu
 
 		case trType_t::TR_SINE:
 			deltaTime = ( atTime - tr->trTime ) / ( float ) tr->trDuration;
-			phase = cos( deltaTime * M_PI * 2 );  // derivative of sin = cos
+			phase = cosf( deltaTime * M_PI * 2 );  // derivative of sin = cos
 			phase *= 2 * M_PI * 1000 / tr->trDuration;
 			VectorScale( tr->trDelta, phase, result );
 			break;
@@ -1204,13 +1218,13 @@ void BG_EvaluateTrajectoryDelta( const trajectory_t *tr, int atTime, vec3_t resu
 			break;
 
 		case trType_t::TR_GRAVITY:
-			deltaTime = ( atTime - tr->trTime ) * 0.001; // milliseconds to seconds
+			deltaTime = ( atTime - tr->trTime ) * 0.001f; // milliseconds to seconds
 			VectorCopy( tr->trDelta, result );
 			result[ 2 ] -= DEFAULT_GRAVITY * deltaTime; // FIXME: local gravity...
 			break;
 
 		case trType_t::TR_BUOYANCY:
-			deltaTime = ( atTime - tr->trTime ) * 0.001; // milliseconds to seconds
+			deltaTime = ( atTime - tr->trTime ) * 0.001f; // milliseconds to seconds
 			VectorCopy( tr->trDelta, result );
 			result[ 2 ] += DEFAULT_GRAVITY * deltaTime; // FIXME: local gravity...
 			break;
@@ -1532,7 +1546,7 @@ void BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap
 		s->generic1 = WPM_PRIMARY;
 	}
 
-	s->otherEntityNum = ps->otherEntityNum;
+	s->otherEntityNum = 0;
 }
 
 /*
@@ -1681,7 +1695,7 @@ void BG_PlayerStateToEntityStateExtraPolate( playerState_t *ps, entityState_t *s
 		s->generic1 = WPM_PRIMARY;
 	}
 
-	s->otherEntityNum = ps->otherEntityNum;
+	s->otherEntityNum = 0;
 }
 
 /*
@@ -1865,7 +1879,7 @@ bool BG_RotateAxis( vec3_t surfNormal, vec3_t inAxis[ 3 ],
 	//can't rotate with no rotation vector
 	if ( VectorLength( xNormal ) != 0.0f )
 	{
-		rotAngle = RAD2DEG( acos( DotProduct( localNormal, refNormal ) ) );
+		rotAngle = RAD2DEG( acosf( DotProduct( localNormal, refNormal ) ) );
 
 		if ( inverse )
 		{
@@ -1972,52 +1986,55 @@ void BG_PositionBuildableRelativeToPlayer( playerState_t *ps,
 }
 
 /**
- * @brief Calculates the "value" of a player as a base value plus a fraction of the price the
- *        player paid for upgrades.
+ * @brief Calculates how much a player paid for upgrades
  * @param ps
  * @return Player value
  */
-int BG_GetValueOfPlayer( playerState_t *ps )
+int BG_GetPlayerPrice( playerState_t &ps )
 {
-	int price, upgradeNum;
-
-	if ( !ps )
-	{
-		return 0;
-	}
-
-	price = 0;
-
-	switch ( ps->persistant[ PERS_TEAM ] )
+	switch ( ps.persistant[ PERS_TEAM ] )
 	{
 		case TEAM_HUMANS:
+		{
+			int price = 0;
+
 			// Add upgrade price
-			for ( upgradeNum = UP_NONE + 1; upgradeNum < UP_NUM_UPGRADES; upgradeNum++ )
+			for ( int upgradeNum = UP_NONE + 1; upgradeNum < UP_NUM_UPGRADES; upgradeNum++ )
 			{
-				if ( BG_InventoryContainsUpgrade( upgradeNum, ps->stats ) )
+				if ( BG_InventoryContainsUpgrade( upgradeNum, ps.stats ) )
 				{
 					price += BG_Upgrade( upgradeNum )->price;
 				}
 			}
 
 			// Add weapon price
-			for ( upgradeNum = WP_NONE + 1; upgradeNum < WP_NUM_WEAPONS; upgradeNum++ )
+			for ( int upgradeNum = WP_NONE + 1; upgradeNum < WP_NUM_WEAPONS; upgradeNum++ )
 			{
-				if ( BG_InventoryContainsWeapon( upgradeNum, ps->stats ) )
+				if ( BG_InventoryContainsWeapon( upgradeNum, ps.stats ) )
 				{
 					price += BG_Weapon( upgradeNum )->price;
 				}
 			}
-
-			break;
+			return price;
+		}
 
 		case TEAM_ALIENS:
-			price += BG_Class( ps->stats[ STAT_CLASS ] )->cost;
-			break;
+			return BG_Class( ps.stats[ STAT_CLASS ] )->price;
 
 		default:
 			return 0;
 	}
+}
+
+/**
+ * @brief Calculates the "value" of a player as a base value plus a fraction of the price the
+ *        player paid for upgrades.
+ * @param ps
+ * @return Player value
+ */
+int BG_GetPlayerValue( playerState_t &ps )
+{
+	int price = BG_GetPlayerPrice( ps );
 
 	return PLAYER_BASE_VALUE + ( int )( ( float )price * PLAYER_PRICE_TO_VALUE );
 }
@@ -2031,7 +2048,7 @@ bool BG_PlayerCanChangeWeapon( playerState_t *ps )
 {
 	// Do not allow Lucifer Cannon "canceling" via weapon switch
 	if ( ps->weapon == WP_LUCIFER_CANNON &&
-	     ps->stats[ STAT_MISC ] > LCANNON_CHARGE_TIME_MIN )
+	     ps->weaponCharge > LCANNON_CHARGE_TIME_MIN )
 	{
 		return false;
 	}
@@ -2067,7 +2084,7 @@ Also returns whether the gun uses energy or not
 */
 bool BG_PlayerLowAmmo( const playerState_t *ps, bool *energy )
 {
-  int weapon;
+	int weapon;
 	const weaponAttributes_t *wattr;
 
 	// look for the primary weapon
@@ -2076,6 +2093,7 @@ bool BG_PlayerLowAmmo( const playerState_t *ps, bool *energy )
 			if( BG_InventoryContainsWeapon( weapon, ps->stats ) )
 				goto found;
 
+	*energy = false;
 	return false; // got only blaster
 
 found:
@@ -2088,9 +2106,9 @@ found:
 	*energy = wattr->usesEnergy;
 
 	if( wattr->maxClips )
-		return ( ps->clips <= wattr->maxClips * 0.25 );
+		return ( ps->clips <= wattr->maxClips * 0.25f );
 
-	return ( ps->ammo <= wattr->maxAmmo * 0.25 );
+	return ( ps->ammo <= wattr->maxAmmo * 0.25f );
 }
 
 /*
@@ -2302,256 +2320,130 @@ int BG_UnpackEntityNumbers( entityState_t *es, int *entityNums, unsigned int cou
 	return i;
 }
 
-/*
-===============
-BG_ParseCSVEquipmentList
-===============
-*/
-void BG_ParseCSVEquipmentList( const char *string, weapon_t *weapons, int weaponsSize,
-                               upgrade_t *upgrades, int upgradesSize )
+static struct gameElements_t
 {
-	char     buffer[ MAX_STRING_CHARS ];
-	int      i = 0, j = 0;
-	char     *p, *q;
-	bool EOS = false;
-
-	Q_strncpyz( buffer, string, MAX_STRING_CHARS );
-
-	p = q = buffer;
-
-	while ( *p != '\0' )
-	{
-		//skip to first , or EOS
-		while ( *p != ',' && *p != '\0' )
-		{
-			p++;
-		}
-
-		if ( *p == '\0' )
-		{
-			EOS = true;
-		}
-
-		*p = '\0';
-
-		//strip leading whitespace
-		while ( *q == ' ' )
-		{
-			q++;
-		}
-
-		if ( weaponsSize )
-		{
-			weapons[ i ] = BG_WeaponNumberByName( q );
-		}
-
-		if ( upgradesSize )
-		{
-			upgrades[ j ] = BG_UpgradeByName( q )->number;
-		}
-
-		if ( weaponsSize && weapons[ i ] == WP_NONE &&
-		     upgradesSize && upgrades[ j ] == UP_NONE )
-		{
-			Log::Warn( "unknown equipment %s", q );
-		}
-		else if ( weaponsSize && weapons[ i ] != WP_NONE )
-		{
-			i++;
-		}
-		else if ( upgradesSize && upgrades[ j ] != UP_NONE )
-		{
-			j++;
-		}
-
-		if ( !EOS )
-		{
-			p++;
-			q = p;
-		}
-		else
-		{
-			break;
-		}
-
-		if ( i == ( weaponsSize - 1 ) || j == ( upgradesSize - 1 ) )
-		{
-			break;
-		}
-	}
-
-	if ( weaponsSize )
-	{
-		weapons[ i ] = WP_NONE;
-	}
-
-	if ( upgradesSize )
-	{
-		upgrades[ j ] = UP_NONE;
-	}
-}
-
-/*
-===============
-BG_ParseCSVClassList
-===============
-*/
-void BG_ParseCSVClassList( const char *string, class_t *classes, int classesSize )
-{
-	char     buffer[ MAX_STRING_CHARS ];
-	int      i = 0;
-	char     *p, *q;
-	bool EOS = false;
-
-	Q_strncpyz( buffer, string, MAX_STRING_CHARS );
-
-	p = q = buffer;
-
-	while ( *p != '\0' && i < classesSize - 1 )
-	{
-		//skip to first , or EOS
-		while ( *p != ',' && *p != '\0' )
-		{
-			p++;
-		}
-
-		if ( *p == '\0' )
-		{
-			EOS = true;
-		}
-
-		*p = '\0';
-
-		//strip leading whitespace
-		while ( *q == ' ' )
-		{
-			q++;
-		}
-
-		classes[ i ] = BG_ClassByName( q )->number;
-
-		if ( classes[ i ] == PCL_NONE )
-		{
-			Log::Warn( "unknown class %s", q );
-		}
-		else
-		{
-			i++;
-		}
-
-		if ( !EOS )
-		{
-			p++;
-			q = p;
-		}
-		else
-		{
-			break;
-		}
-	}
-
-	classes[ i ] = PCL_NONE;
-}
-
-/*
-===============
-BG_ParseCSVBuildableList
-===============
-*/
-void BG_ParseCSVBuildableList( const char *string, buildable_t *buildables, int buildablesSize )
-{
-	char     buffer[ MAX_STRING_CHARS ];
-	int      i = 0;
-	char     *p, *q;
-	bool EOS = false;
-
-	Q_strncpyz( buffer, string, MAX_STRING_CHARS );
-
-	p = q = buffer;
-
-	while ( *p != '\0' && i < buildablesSize - 1 )
-	{
-		//skip to first , or EOS
-		while ( *p != ',' && *p != '\0' )
-		{
-			p++;
-		}
-
-		if ( *p == '\0' )
-		{
-			EOS = true;
-		}
-
-		*p = '\0';
-
-		//strip leading whitespace
-		while ( *q == ' ' )
-		{
-			q++;
-		}
-
-		buildables[ i ] = BG_BuildableByName( q )->number;
-
-		if ( buildables[ i ] == BA_NONE )
-		{
-			Log::Warn( "unknown buildable %s", q );
-		}
-		else
-		{
-			i++;
-		}
-
-		if ( !EOS )
-		{
-			p++;
-			q = p;
-		}
-		else
-		{
-			break;
-		}
-	}
-
-	buildables[ i ] = BA_NONE;
-}
-
-struct gameElements_t
-{
-	buildable_t buildables[ BA_NUM_BUILDABLES ];
-	class_t     classes[ PCL_NUM_CLASSES ];
-	weapon_t    weapons[ WP_NUM_WEAPONS ];
-	upgrade_t   upgrades[ UP_NUM_UPGRADES ];
-};
-
-static gameElements_t bg_disabledGameElements;
+	std::vector<buildable_t> buildables;
+	std::vector<class_t>     classes;
+	std::vector<weapon_t>    weapons;
+	std::vector<upgrade_t>   upgrades;
+} bg_disabledGameElements;
 
 /*
 ============
-BG_InitAllowedGameElements
+BG_ParseEquipmentList
 ============
 */
-void BG_InitAllowedGameElements()
+std::pair<std::vector<weapon_t>, std::vector<upgrade_t>> BG_ParseEquipmentList(const std::string &equipment)
 {
-	char cvar[ MAX_CVAR_VALUE_STRING ];
+	std::vector<weapon_t> weapons;
+	std::vector<upgrade_t> upgrades;
 
-	trap_Cvar_VariableStringBuffer( "g_disabledEquipment",
-	                                cvar, MAX_CVAR_VALUE_STRING );
+	for (Parse_WordListSplitter i(equipment); *i; ++i)
+	{
+		weapon_t result_w = BG_WeaponNumberByName(*i);
+		upgrade_t result_u = BG_UpgradeByName(*i)->number;
 
-	BG_ParseCSVEquipmentList( cvar,
-	                          bg_disabledGameElements.weapons, WP_NUM_WEAPONS,
-	                          bg_disabledGameElements.upgrades, UP_NUM_UPGRADES );
+		if (result_w != WP_NONE)
+		{
+			weapons.push_back(result_w);
+		}
+		else if (result_u != UP_NONE)
+		{
+			upgrades.push_back(result_u);
+		}
+		else
+		{
+			Log::Warn( "unknown equipment %s", *i );
+		}
+	}
 
-	trap_Cvar_VariableStringBuffer( "g_disabledClasses",
-	                                cvar, MAX_CVAR_VALUE_STRING );
+	return { weapons, upgrades };
+}
 
-	BG_ParseCSVClassList( cvar,
-	                      bg_disabledGameElements.classes, PCL_NUM_CLASSES );
+/*
+============
+BG_ParseClassList
+============
+*/
+std::vector<class_t> BG_ParseClassList(const std::string &classes)
+{
+	std::vector<class_t> results;
 
-	trap_Cvar_VariableStringBuffer( "g_disabledBuildables",
-	                                cvar, MAX_CVAR_VALUE_STRING );
+	for (Parse_WordListSplitter i(classes); *i; ++i)
+	{
+		class_t result = BG_ClassByName(*i)->number;
 
-	BG_ParseCSVBuildableList( cvar,
-	                          bg_disabledGameElements.buildables, BA_NUM_BUILDABLES );
+		if (result != PCL_NONE)
+		{
+			results.push_back(result);
+		}
+		else
+		{
+			Log::Warn( "unknown class %s", *i );
+		}
+	}
+
+	return results;
+}
+
+/*
+============
+BG_ParseBuildableList
+============
+*/
+std::vector<buildable_t> BG_ParseBuildableList(const std::string &allowed)
+{
+	std::vector<buildable_t> results;
+
+	for (Parse_WordListSplitter i(allowed); *i; ++i)
+	{
+		buildable_t result = BG_BuildableByName(*i)->number;
+
+		if (result != BA_NONE)
+		{
+			results.push_back(result);
+		}
+		else
+		{
+			Log::Warn( "unknown buildable %s", *i );
+		}
+	}
+
+	return results;
+}
+
+/*
+============
+BG_SetForbiddenEquipment
+============
+*/
+void BG_SetForbiddenEquipment(std::string forbidden_csv)
+{
+	auto pair = BG_ParseEquipmentList( forbidden_csv );
+	bg_disabledGameElements.weapons = pair.first;
+	bg_disabledGameElements.upgrades = pair.second;
+}
+
+/*
+============
+BG_SetForbiddenClasses
+============
+*/
+void BG_SetForbiddenClasses(std::string forbidden_csv)
+{
+	bg_disabledGameElements.classes =
+		BG_ParseClassList( forbidden_csv );
+}
+
+/*
+============
+BG_SetForbiddenBuildables
+============
+*/
+void BG_SetForbiddenBuildables(std::string forbidden_csv)
+{
+	bg_disabledGameElements.buildables =
+		BG_ParseBuildableList( forbidden_csv );
 }
 
 /*
@@ -2561,17 +2453,11 @@ BG_WeaponIsAllowed
 */
 bool BG_WeaponDisabled( int weapon )
 {
-	int i;
-
-	for ( i = 0; i < WP_NUM_WEAPONS &&
-	      bg_disabledGameElements.weapons[ i ] != WP_NONE; i++ )
-	{
-		if ( bg_disabledGameElements.weapons[ i ] == weapon )
-		{
+	for ( auto w : bg_disabledGameElements.weapons ) {
+		if ( w == weapon ) {
 			return true;
 		}
 	}
-
 	return false;
 }
 
@@ -2582,17 +2468,11 @@ BG_UpgradeIsAllowed
 */
 bool BG_UpgradeDisabled( int upgrade )
 {
-	int i;
-
-	for ( i = 0; i < UP_NUM_UPGRADES &&
-	      bg_disabledGameElements.upgrades[ i ] != UP_NONE; i++ )
-	{
-		if ( bg_disabledGameElements.upgrades[ i ] == upgrade )
-		{
+	for ( auto u : bg_disabledGameElements.upgrades ) {
+		if ( u == upgrade ) {
 			return true;
 		}
 	}
-
 	return false;
 }
 
@@ -2603,17 +2483,11 @@ BG_ClassDisabled
 */
 bool BG_ClassDisabled( int class_ )
 {
-	int i;
-
-	for ( i = 0; i < PCL_NUM_CLASSES &&
-	      bg_disabledGameElements.classes[ i ] != PCL_NONE; i++ )
-	{
-		if ( bg_disabledGameElements.classes[ i ] == class_ )
-		{
+	for ( auto c : bg_disabledGameElements.classes ) {
+		if ( c == class_ ) {
 			return true;
 		}
 	}
-
 	return false;
 }
 
@@ -2624,17 +2498,11 @@ BG_BuildableIsAllowed
 */
 bool BG_BuildableDisabled( int buildable )
 {
-	int i;
-
-	for ( i = 0; i < BA_NUM_BUILDABLES &&
-	      bg_disabledGameElements.buildables[ i ] != BA_NONE; i++ )
-	{
-		if ( bg_disabledGameElements.buildables[ i ] == buildable )
-		{
+	for ( auto b : bg_disabledGameElements.buildables ) {
+		if ( b == buildable ) {
 			return true;
 		}
 	}
-
 	return false;
 }
 
@@ -2668,68 +2536,61 @@ weapon_t BG_PrimaryWeapon( int stats[] )
 	return WP_NONE;
 }
 
+static std::unordered_map<std::string, emoticonData_t, Str::IHash, Str::IEqual> emoticons;
 /*
 ============
 BG_LoadEmoticons
 ============
 */
-int BG_LoadEmoticons( emoticon_t *emoticons, int num )
+void BG_LoadEmoticons()
 {
-	int  numFiles;
-	char fileList[ MAX_EMOTICONS * ( MAX_EMOTICON_NAME_LEN + 9 ) ] = { "" };
-	int  i;
-	char *filePtr;
-	int  fileLen;
-	int  count;
-
-	numFiles = trap_FS_GetFileList( "emoticons", "x1.crn", fileList,
-	                                sizeof( fileList ) );
-
-	if ( numFiles < 1 )
-	{
-		return 0;
-	}
-
-	filePtr = fileList;
-	fileLen = 0;
-	count = 0;
-
-	for ( i = 0; i < numFiles && count < num; i++, filePtr += fileLen + 1 )
-	{
-		fileLen = strlen( filePtr );
-
-		if ( fileLen < 9 || filePtr[ fileLen - 8 ] != '_' ||
-		     filePtr[ fileLen - 7 ] < '1' || filePtr[ fileLen - 7 ] > '9' )
+	int count = 0;
+	for ( const std::string& filename : FS::PakPath::ListFiles( "emoticons/" ) ) {
+		// Assume any file with a dot in its name is an image
+		std::string name = FS::Path::StripExtension( filename );
+		if ( name.size() + 1 >= filename.size() )
 		{
-			Log::Notice( "^3skipping invalidly named emoticon \"%s\"\n",
-			            filePtr );
 			continue;
 		}
-
-		if ( fileLen - 8 >= MAX_EMOTICON_NAME_LEN )
+		emoticonData_t& data = emoticons[ name ];
+		if ( !data.imageFile.empty() )
 		{
-			Log::Notice( "^3emoticon file name \"%s\" too long (≥ %d)\n",
-			            filePtr, MAX_EMOTICON_NAME_LEN + 8 );
+			Log::Warn( "Conflicting emoticon images found: %s and emoticons/%s", data.imageFile, filename );
 			continue;
 		}
-
-		if ( !trap_FS_FOpenFile( va( "emoticons/%s", filePtr ), nullptr, fsMode_t::FS_READ ) )
-		{
-			Log::Notice( "^3could not open \"emoticons/%s\"\n", filePtr );
-			continue;
-		}
-
-		Q_strncpyz( emoticons[ count ].name, filePtr, fileLen - 8 + 1 );
-#ifndef BUILD_SGAME
-		emoticons[ count ].width = filePtr[ fileLen - 7 ] - '0';
-#endif
+		data.imageFile = "emoticons/" + filename;
 		count++;
 	}
 
-	// Log::Notice( "Loaded %d of %d emoticons (MAX_EMOTICONS is %d)\n", // FIXME PLURAL
-	//             count, numFiles, MAX_EMOTICONS );
+	Log::Verbose( "Loaded %d emoticons", count );
+}
 
-	return count;
+const emoticonData_t* BG_Emoticon( const std::string& name )
+{
+	auto iter = emoticons.find( name );
+	if ( iter != emoticons.end() )
+	{
+		return &iter->second;
+	}
+	return nullptr;
+}
+
+// Is there a known emoticon starting at s?
+const emoticonData_t* BG_EmoticonAt( const char *s )
+{
+	if ( *s != '[' )
+	{
+		return nullptr;
+	}
+
+	const char* bracket = strpbrk( s + 1, "[]" );
+	if ( bracket == nullptr || *bracket != ']' )
+	{
+		return nullptr;
+	}
+
+	std::string name(s + 1, bracket);
+	return BG_Emoticon( name );
 }
 
 /*
@@ -2878,4 +2739,81 @@ const char *Trans_GenderContext( gender_t gender )
 			return "unknown";
 			break;
 	}
+}
+
+// using the stringizing operator to save typing...
+#define PSF( x ) # x, offsetof( playerState_t, x )
+
+static const NetcodeTable playerStateFields =
+{
+	{ PSF( persistant        ), STATS_GROUP_FIELD, 0 },
+	{ PSF( stats             ), STATS_GROUP_FIELD, 0 },
+	{ PSF( misc              ), STATS_GROUP_FIELD, 0 },
+	{ PSF( commandTime       ), 32               , 0 },
+	{ PSF( pm_type           ), 8                , 0 },
+	{ PSF( bobCycle          ), 8                , 0 },
+	{ PSF( pm_flags          ), 16               , 0 },
+	{ PSF( pm_time           ), -16              , 0 },
+	{ PSF( origin[ 0 ]       ), 0                , 0 },
+	{ PSF( origin[ 1 ]       ), 0                , 0 },
+	{ PSF( origin[ 2 ]       ), 0                , 0 },
+	{ PSF( velocity[ 0 ]     ), 0                , 0 },
+	{ PSF( velocity[ 1 ]     ), 0                , 0 },
+	{ PSF( velocity[ 2 ]     ), 0                , 0 },
+	{ PSF( weaponCharge      ), -15              , 0 },
+	{ PSF( weaponTime        ), -16              , 0 },
+	{ PSF( gravity           ), 16               , 0 },
+	{ PSF( speed             ), 16               , 0 },
+	{ PSF( delta_angles[ 0 ] ), 16               , 0 },
+	{ PSF( delta_angles[ 1 ] ), 16               , 0 },
+	{ PSF( delta_angles[ 2 ] ), 16               , 0 },
+	{ PSF( groundEntityNum   ), GENTITYNUM_BITS  , 0 },
+	{ PSF( legsTimer         ), 16               , 0 },
+	{ PSF( torsoTimer        ), 16               , 0 },
+	{ PSF( legsAnim          ), ANIM_BITS        , 0 },
+	{ PSF( torsoAnim         ), ANIM_BITS        , 0 },
+	{ PSF( movementDir       ), 8                , 0 },
+	{ PSF( eFlags            ), 24               , 0 },
+	{ PSF( eventSequence     ), 8                , 0 },
+	{ PSF( events[ 0 ]       ), 8                , 0 },
+	{ PSF( events[ 1 ]       ), 8                , 0 },
+	{ PSF( events[ 2 ]       ), 8                , 0 },
+	{ PSF( events[ 3 ]       ), 8                , 0 },
+	{ PSF( eventParms[ 0 ]   ), 8                , 0 },
+	{ PSF( eventParms[ 1 ]   ), 8                , 0 },
+	{ PSF( eventParms[ 2 ]   ), 8                , 0 },
+	{ PSF( eventParms[ 3 ]   ), 8                , 0 },
+	{ PSF( clientNum         ), 8                , 0 },
+	{ PSF( weapon            ), 7                , 0 },
+	{ PSF( weaponstate       ), 4                , 0 },
+	{ PSF( viewangles[ 0 ]   ), 0                , 0 },
+	{ PSF( viewangles[ 1 ]   ), 0                , 0 },
+	{ PSF( viewangles[ 2 ]   ), 0                , 0 },
+	{ PSF( viewheight        ), -8               , 0 },
+	{ PSF( damageEvent       ), 8                , 0 },
+	{ PSF( damageYaw         ), 8                , 0 },
+	{ PSF( damagePitch       ), 8                , 0 },
+	{ PSF( damageCount       ), 8                , 0 },
+	{ PSF( generic1          ), 10               , 0 },
+	{ PSF( loopSound         ), 16               , 0 },
+	{ PSF( grapplePoint[ 0 ] ), 0                , 0 },
+	{ PSF( grapplePoint[ 1 ] ), 0                , 0 },
+	{ PSF( grapplePoint[ 2 ] ), 0                , 0 },
+	{ PSF( ammo              ), 12               , 0 },
+	{ PSF( clips             ), 4                , 0 },
+	{ PSF( tauntTimer        ), 12               , 0 },
+	{ PSF( weaponAnim        ), ANIM_BITS        , 0 }
+};
+
+namespace VM {
+	void GetNetcodeTables(NetcodeTable& playerStateTable, int& playerStateSize) {
+		playerStateTable = playerStateFields;
+		playerStateSize = sizeof(playerState_t);
+	}
+}
+
+// checks if a weapon can fire
+bool playerState_t::IsWeaponReady( void ) const
+{
+	return weaponTime <= 0 && ( ammo > 0 || BG_Weapon( weapon )->infiniteAmmo );
 }

@@ -23,20 +23,47 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 
-#ifndef __BOT_HEADER
-#define __BOT_HEADER
+/*
+======================
+src/sgame/sg_bot_local.h
+
+This file contains the headers of the internal functions used by bot only.
+======================
+*/
+
+#ifndef BOT_LOCAL_H_
+#define BOT_LOCAL_H_
+
+#include "sg_local.h"
 
 struct botEntityAndDistance_t
 {
-	gentity_t *ent;
+	gentity_t const *ent;
 	float distance;
 };
 
-struct botTarget_t
+class botTarget_t
 {
-	gentity_t *ent;
+public:
+	botTarget_t& operator=(const gentity_t *ent);
+	botTarget_t& operator=(const vec3_t pos);
+	void clear();
+	entityType_t getTargetType() const;
+	bool isValid() const;
+	// checks if the target is a position
+	bool targetsCoordinates() const;
+	// checks if target is an entity, isn't recycled yet
+	// and is still alive
+	bool targetsValidEntity() const;
+	// note you should use "targetsValidEntity" along with this
+	const gentity_t *getTargetedEntity() const;
+	// note if you don't check with "isValid" first, you may
+	// have garbage as a result
+	void getPos(vec3_t out) const;
+private:
+	GentityConstRef ent;
 	vec3_t coord;
-	bool inuse;
+	enum class targetType { EMPTY, COORDS, ENTITY } type;
 };
 
 #define MAX_ENEMY_QUEUE 32
@@ -60,9 +87,9 @@ struct botSkill_t
 	float aimShake;
 };
 
-#include "sg_bot_ai.h"
 #define MAX_NODE_DEPTH 20
-
+struct AIBehaviorTree_t;
+struct AIGenericNode_t;
 struct botMemory_t
 {
 	enemyQueue_t enemyQueue;
@@ -72,6 +99,9 @@ struct botMemory_t
 	team_t botTeam;
 
 	botTarget_t goal;
+	void willSprint( bool enable );
+	void doSprint( int jumpCost, int stamina, usercmd_t& cmd );
+	usercmd_t   cmdBuffer;
 
 	botSkill_t botSkill;
 	botEntityAndDistance_t bestEnemy;
@@ -86,31 +116,23 @@ struct botMemory_t
 	int         futureAimTime;
 	int         futureAimTimeInterval;
 	vec3_t      futureAim;
-	usercmd_t   cmdBuffer;
 	botNavCmd_t nav;
 
 	int lastThink;
 	int stuckTime;
 	vec3_t stuckPosition;
+
+	int spawnTime;
+	//avoid relying on buttons to remember what AI was doing
+	bool wantSprinting = false;
+	bool exhausted = false;
 };
 
-constexpr int BOT_DEFAULT_SKILL = 5;
-const char BOT_DEFAULT_BEHAVIOR[] = "default";
-const char BOT_NAME_FROM_LIST[] = "*";
+bool G_BotSetupNav( const botClass_t *botClass, qhandle_t *navHandle );
+void G_BotShutdownNav();
+void G_BotSetNavMesh( int botClientNum, qhandle_t navHandle );
+bool G_BotFindRoute( int botClientNum, const botRouteTarget_t *target, bool allowPartial );
+void G_BotUpdatePath( int botClientNum, const botRouteTarget_t *target, botNavCmd_t *cmd );
+bool G_BotNavTrace( int botClientNum, botTrace_t *botTrace, const vec3_t start, const vec3_t end );
 
-bool G_BotAdd( const char *name, team_t team, int skill, const char *behavior, bool filler = false );
-bool G_BotSetDefaults( int clientNum, team_t team, int skill, const char* behavior );
-void     G_BotDel( int clientNum );
-void     G_BotDelAllBots();
-void     G_BotThink( gentity_t *self );
-void     G_BotSpectatorThink( gentity_t *self );
-void     G_BotIntermissionThink( gclient_t *client );
-void     G_BotListNames( gentity_t *ent );
-bool G_BotClearNames();
-int      G_BotAddNames(team_t team, int arg, int last);
-void     G_BotDisableArea( vec3_t origin, vec3_t mins, vec3_t maxs );
-void     G_BotEnableArea( vec3_t origin, vec3_t mins, vec3_t maxs );
-void     G_BotInit();
-void     G_BotCleanup();
-void G_BotFill( bool immediately );
 #endif

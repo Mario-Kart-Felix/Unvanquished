@@ -26,9 +26,7 @@ along with Unvanquished Source Code.  If not, see <http://www.gnu.org/licenses/>
 #define SG_TRAPCALLS_H_
 
 int              trap_Milliseconds();
-void             trap_Cvar_Register( vmCvar_t *cvar, const char *var_name, const char *value, int flags );
 void             trap_Cvar_Set( const char *var_name, const char *value );
-void             trap_Cvar_Update( vmCvar_t *cvar );
 int              trap_Cvar_VariableIntegerValue( const char *var_name );
 void             trap_Cvar_VariableStringBuffer( const char *var_name, char *buffer, int bufsize );
 int              trap_Argc();
@@ -41,7 +39,7 @@ int              trap_FS_Write( const void *buffer, int len, fileHandle_t f );
 void             trap_FS_Rename( const char *from, const char *to );
 void             trap_FS_FCloseFile( fileHandle_t f );
 int              trap_FS_GetFileList( const char *path, const char *extension, char *listbuf, int bufsize );
-void             trap_LocateGameData( int numGEntities, int sizeofGEntity_t, playerState_t *clients, int sizeofGClient );
+void             trap_LocateGameData( int numGEntities, int sizeofGEntity_t, int sizeofGClient );
 void             trap_DropClient( int clientNum, const char *reason );
 void             trap_SendServerCommand( int clientNum, const char *text );
 void             trap_SetConfigstring( int num, const char *string );
@@ -68,8 +66,6 @@ bool         trap_GetEntityToken( char *buffer, int bufferSize );
 void             trap_AddCommand( const char *cmdName );
 void             trap_RemoveCommand( const char *cmdName );
 int              trap_BotGetServerCommand( int clientNum, char *message, int size );
-void             trap_SendMessage(int clientNum, const std::vector<uint8_t>& message);
-messageStatus_t  trap_MessageStatus( int clientNum );
 
 int              trap_RSA_GenerateMessage( const char *public_key, char *cleartext, char *encrypted );
 
@@ -80,19 +76,5 @@ void             trap_GetPlayerPubkey( int clientNum, char *pubkey, int size );
 
 void             trap_GetTimeString( char *buffer, int size, const char *format, const qtime_t *tm );
 bool         trap_FindPak( const char *name );
-
-bool         trap_BotSetupNav( const botClass_t *botClass, qhandle_t *navHandle );
-void             trap_BotShutdownNav();
-void             trap_BotSetNavMesh( int botClientNum, qhandle_t navHandle );
-bool         trap_BotFindRoute( int botClientNum, const botRouteTarget_t *target, bool allowPartial );
-bool         trap_BotUpdatePath( int botClientNum, const botRouteTarget_t *target, botNavCmd_t *cmd );
-bool         trap_BotNavTrace( int botClientNum, botTrace_t *botTrace, const vec3_t start, const vec3_t end );
-void             trap_BotFindRandomPoint( int botClientNum, vec3_t point );
-bool         trap_BotFindRandomPointInRadius( int botClientNum, const vec3_t origin, vec3_t point, float radius );
-void             trap_BotEnableArea( const vec3_t origin, const vec3_t mins, const vec3_t maxs );
-void             trap_BotDisableArea( const vec3_t origin, const vec3_t mins, const vec3_t maxs );
-void             trap_BotAddObstacle( const vec3_t mins, const vec3_t maxs, qhandle_t *handle );
-void             trap_BotRemoveObstacle( qhandle_t handle );
-void             trap_BotUpdateObstacles();
 
 #endif // SG_TRAPCALLS_H_
