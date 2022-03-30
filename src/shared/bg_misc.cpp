@@ -35,12 +35,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // delayed translation - these strings may be passed to Trans_Gettext() later
 #define N_(x) x
 
-int                                trap_FS_FOpenFile( const char *qpath, fileHandle_t *f, fsMode_t mode );
-int                                trap_FS_Read( void *buffer, int len, fileHandle_t f );
-int                                trap_FS_Write( const void *buffer, int len, fileHandle_t f );
-void                               trap_FS_FCloseFile( fileHandle_t f );
-void                               trap_FS_Seek( fileHandle_t f, long offset, fsOrigin_t origin );  // fsOrigin_t
-int                                trap_FS_GetFileList( const char *path, const char *extension, char *listbuf, int bufsize );
 void                               trap_QuoteString( const char *, char *, int );
 
 struct buildableName_t
@@ -1412,15 +1406,12 @@ This is done after each set of usercmd_t on the server,
 and after local prediction on the client
 ========================
 */
-void BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap )
+static void PlayerStateToEntityState( playerState_t *ps, entityState_t *s )
 {
-	int i;
-
-	if ( ps->pm_type == PM_INTERMISSION || ps->pm_type == PM_SPECTATOR || ps->pm_type == PM_FREEZE )
-	{
-		s->eType = entityType_t::ET_INVISIBLE;
-	}
-	else if ( ps->persistant[ PERS_SPECSTATE ] != SPECTATOR_NOT )
+	if ( ps->pm_type == PM_INTERMISSION
+			|| ps->pm_type == PM_SPECTATOR
+			|| ps->pm_type == PM_FREEZE
+			|| ps->persistant[ PERS_SPECSTATE ] != SPECTATOR_NOT )
 	{
 		s->eType = entityType_t::ET_INVISIBLE;
 	}
@@ -1431,24 +1422,13 @@ void BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap
 
 	s->number = ps->clientNum;
 
-	s->pos.trType = trType_t::TR_INTERPOLATE;
 	VectorCopy( ps->origin, s->pos.trBase );
-
-	if ( snap )
-	{
-		SnapVector( s->pos.trBase );
-	}
 
 	//set the trDelta for flag direction
 	VectorCopy( ps->velocity, s->pos.trDelta );
 
 	s->apos.trType = trType_t::TR_INTERPOLATE;
 	VectorCopy( ps->viewangles, s->apos.trBase );
-
-	if ( snap )
-	{
-		SnapVector( s->apos.trBase );
-	}
 
 	s->time2 = ps->movementDir;
 	s->legsAnim = ps->legsAnim;
@@ -1502,7 +1482,7 @@ void BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap
 	// HACK: store held items in modelindex
 	s->modelindex = 0;
 
-	for ( i = UP_NONE + 1; i < UP_NUM_UPGRADES; i++ )
+	for ( int i = UP_NONE + 1; i < UP_NUM_UPGRADES; i++ )
 	{
 		if ( BG_InventoryContainsUpgrade( i, ps->stats ) )
 		{
@@ -1549,6 +1529,19 @@ void BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap
 	s->otherEntityNum = 0;
 }
 
+// snap is true when called by sgame, false when called by cgame
+void BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap )
+{
+	PlayerStateToEntityState( ps, s );
+
+	s->pos.trType = trType_t::TR_INTERPOLATE;
+	if ( snap )
+	{
+		SnapVector( s->pos.trBase );
+		SnapVector( s->apos.trBase );
+	}
+}
+
 /*
 ========================
 BG_PlayerStateToEntityStateExtraPolate
@@ -1557,145 +1550,17 @@ This is done after each set of usercmd_t on the server,
 and after local prediction on the client
 ========================
 */
-void BG_PlayerStateToEntityStateExtraPolate( playerState_t *ps, entityState_t *s, int time, bool snap )
+void BG_PlayerStateToEntityStateExtraPolate( playerState_t *ps, entityState_t *s, int time )
 {
-	int i;
-
-	if ( ps->pm_type == PM_INTERMISSION || ps->pm_type == PM_SPECTATOR || ps->pm_type == PM_FREEZE )
-	{
-		s->eType = entityType_t::ET_INVISIBLE;
-	}
-	else if ( ps->persistant[ PERS_SPECSTATE ] != SPECTATOR_NOT )
-	{
-		s->eType = entityType_t::ET_INVISIBLE;
-	}
-	else
-	{
-		s->eType = entityType_t::ET_PLAYER;
-	}
-
-	s->number = ps->clientNum;
-
+	PlayerStateToEntityState( ps, s );
 	s->pos.trType = trType_t::TR_LINEAR_STOP;
-	VectorCopy( ps->origin, s->pos.trBase );
-
-	if ( snap )
-	{
-		SnapVector( s->pos.trBase );
-	}
-
-	// set the trDelta for flag direction and linear prediction
-	VectorCopy( ps->velocity, s->pos.trDelta );
+	SnapVector( s->pos.trBase );
+	SnapVector( s->apos.trBase );
 	// set the time for linear prediction
 	s->pos.trTime = time;
-	// set maximum extra polation time
+	// set maximum extrapolation time
+	// TODO: remove in 0.53 (use daemon's sv_fps cvar, which is currently not accessible)
 	s->pos.trDuration = 50; // 1000 / sv_fps (default = 20)
-
-	s->apos.trType = trType_t::TR_INTERPOLATE;
-	VectorCopy( ps->viewangles, s->apos.trBase );
-
-	if ( snap )
-	{
-		SnapVector( s->apos.trBase );
-	}
-
-	s->time2 = ps->movementDir;
-	s->legsAnim = ps->legsAnim;
-	s->torsoAnim = ps->torsoAnim;
-	s->weaponAnim = ps->weaponAnim;
-	s->clientNum = ps->clientNum; // ET_PLAYER looks here instead of at number
-	// so corpses can also reference the proper config
-	s->eFlags = ps->eFlags;
-
-	if ( ps->stats[ STAT_HEALTH ] <= 0 )
-	{
-		s->eFlags |= EF_DEAD;
-	}
-	else
-	{
-		s->eFlags &= ~EF_DEAD;
-	}
-
-	if ( ps->stats[ STAT_STATE ] & SS_BLOBLOCKED )
-	{
-		s->eFlags |= EF_BLOBLOCKED;
-	}
-	else
-	{
-		s->eFlags &= ~EF_BLOBLOCKED;
-	}
-
-	if ( ps->externalEvent )
-	{
-		s->event = ps->externalEvent;
-		s->eventParm = ps->externalEventParm;
-	}
-	else if ( ps->entityEventSequence < ps->eventSequence )
-	{
-		int seq;
-
-		if ( ps->entityEventSequence < ps->eventSequence - MAX_EVENTS )
-		{
-			ps->entityEventSequence = ps->eventSequence - MAX_EVENTS;
-		}
-
-		seq = ps->entityEventSequence & ( MAX_EVENTS - 1 );
-		s->event = ps->events[ seq ] | ( ( ps->entityEventSequence & 3 ) << 8 );
-		s->eventParm = ps->eventParms[ seq ];
-		ps->entityEventSequence++;
-	}
-
-	s->weapon = ps->weapon;
-	s->groundEntityNum = ps->groundEntityNum;
-
-	// HACK: store held items in modelindex
-	s->modelindex = 0;
-
-	for ( i = UP_NONE + 1; i < UP_NUM_UPGRADES; i++ )
-	{
-		if ( BG_InventoryContainsUpgrade( i, ps->stats ) )
-		{
-			s->modelindex |= 1 << i;
-		}
-	}
-
-	// set "public state" flags
-	s->modelindex2 = 0;
-
-	// copy jetpack state
-	if ( ps->stats[ STAT_STATE2 ] & SS2_JETPACK_ENABLED )
-	{
-		s->modelindex2 |= PF_JETPACK_ENABLED;
-	}
-	else
-	{
-		s->modelindex2 &= ~PF_JETPACK_ENABLED;
-	}
-
-	if ( ps->stats[ STAT_STATE2 ] & SS2_JETPACK_ACTIVE )
-	{
-		s->modelindex2 |= PF_JETPACK_ACTIVE;
-	}
-	else
-	{
-		s->modelindex2 &= ~PF_JETPACK_ACTIVE;
-	}
-
-	// use misc field to store team/class info:
-	s->misc = ps->persistant[ PERS_TEAM ] | ( ps->stats[ STAT_CLASS ] << 8 );
-
-	// have to get the surfNormal through somehow...
-	VectorCopy( ps->grapplePoint, s->angles2 );
-
-	s->loopSound = ps->loopSound;
-	s->generic1 = ps->generic1;
-
-	if ( s->generic1 <= WPM_NONE || s->generic1 >= WPM_NUM_WEAPONMODES )
-	{
-		s->generic1 = WPM_PRIMARY;
-	}
-
-	s->otherEntityNum = 0;
 }
 
 /*
@@ -2322,10 +2187,10 @@ int BG_UnpackEntityNumbers( entityState_t *es, int *entityNums, unsigned int cou
 
 static struct gameElements_t
 {
-	std::vector<buildable_t> buildables;
-	std::vector<class_t>     classes;
-	std::vector<weapon_t>    weapons;
-	std::vector<upgrade_t>   upgrades;
+	BoundedVector<buildable_t, BA_NUM_BUILDABLES> buildables;
+	BoundedVector<class_t,     PCL_NUM_CLASSES>   classes;
+	BoundedVector<weapon_t,    WP_NUM_WEAPONS>    weapons;
+	BoundedVector<upgrade_t,   UP_NUM_UPGRADES>   upgrades;
 } bg_disabledGameElements;
 
 /*
@@ -2333,10 +2198,12 @@ static struct gameElements_t
 BG_ParseEquipmentList
 ============
 */
-std::pair<std::vector<weapon_t>, std::vector<upgrade_t>> BG_ParseEquipmentList(const std::string &equipment)
+std::pair<BoundedVector<weapon_t,  WP_NUM_WEAPONS>,
+          BoundedVector<upgrade_t, UP_NUM_UPGRADES>>
+		BG_ParseEquipmentList( const std::string &equipment )
 {
-	std::vector<weapon_t> weapons;
-	std::vector<upgrade_t> upgrades;
+	BoundedVector<weapon_t,  WP_NUM_WEAPONS>  weapons;
+	BoundedVector<upgrade_t, UP_NUM_UPGRADES> upgrades;
 
 	for (Parse_WordListSplitter i(equipment); *i; ++i)
 	{
@@ -2345,11 +2212,11 @@ std::pair<std::vector<weapon_t>, std::vector<upgrade_t>> BG_ParseEquipmentList(c
 
 		if (result_w != WP_NONE)
 		{
-			weapons.push_back(result_w);
+			weapons.append(result_w);
 		}
 		else if (result_u != UP_NONE)
 		{
-			upgrades.push_back(result_u);
+			upgrades.append(result_u);
 		}
 		else
 		{
@@ -2365,9 +2232,10 @@ std::pair<std::vector<weapon_t>, std::vector<upgrade_t>> BG_ParseEquipmentList(c
 BG_ParseClassList
 ============
 */
-std::vector<class_t> BG_ParseClassList(const std::string &classes)
+BoundedVector<class_t, PCL_NUM_CLASSES>
+		BG_ParseClassList( const std::string &classes )
 {
-	std::vector<class_t> results;
+	BoundedVector<class_t, PCL_NUM_CLASSES> results;
 
 	for (Parse_WordListSplitter i(classes); *i; ++i)
 	{
@@ -2375,7 +2243,7 @@ std::vector<class_t> BG_ParseClassList(const std::string &classes)
 
 		if (result != PCL_NONE)
 		{
-			results.push_back(result);
+			results.append(result);
 		}
 		else
 		{
@@ -2391,9 +2259,10 @@ std::vector<class_t> BG_ParseClassList(const std::string &classes)
 BG_ParseBuildableList
 ============
 */
-std::vector<buildable_t> BG_ParseBuildableList(const std::string &allowed)
+BoundedVector<buildable_t, BA_NUM_BUILDABLES>
+		BG_ParseBuildableList( const std::string &allowed )
 {
-	std::vector<buildable_t> results;
+	BoundedVector<buildable_t, BA_NUM_BUILDABLES> results;
 
 	for (Parse_WordListSplitter i(allowed); *i; ++i)
 	{
@@ -2401,7 +2270,7 @@ std::vector<buildable_t> BG_ParseBuildableList(const std::string &allowed)
 
 		if (result != BA_NONE)
 		{
-			results.push_back(result);
+			results.append(result);
 		}
 		else
 		{
@@ -2511,7 +2380,7 @@ bool BG_BuildableDisabled( int buildable )
 BG_PrimaryWeapon
 ============
 */
-weapon_t BG_PrimaryWeapon( int stats[] )
+weapon_t BG_PrimaryWeapon( int const stats[] )
 {
 	int i;
 

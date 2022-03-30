@@ -896,7 +896,7 @@ static int CG_CalcFov()
 	trap_GetUserCmd( cmdNum - 1, &oldcmd );
 
 	// Cycle between follow and third-person follow modes on mouse middle click.
-	if ( usercmdButtonPressed( cmd.buttons, BUTTON_ATTACK3 ) && !usercmdButtonPressed( oldcmd.buttons, BUTTON_ATTACK3 ) )
+	if ( usercmdButtonPressed( cmd.buttons, BTN_ATTACK3 ) && !usercmdButtonPressed( oldcmd.buttons, BTN_ATTACK3 ) )
 	{
 		if ( cg.snap->ps.pm_flags & PMF_FOLLOW )
 		{
@@ -912,7 +912,7 @@ static int CG_CalcFov()
 	}
 
 	// Start and stoop to follow on mouse right click.
-	if ( usercmdButtonPressed( cmd.buttons, BUTTON_ATTACK2 ) && !usercmdButtonPressed( oldcmd.buttons, BUTTON_ATTACK2 ) )
+	if ( usercmdButtonPressed( cmd.buttons, BTN_ATTACK2 ) && !usercmdButtonPressed( oldcmd.buttons, BTN_ATTACK2 ) )
 	{
 		if ( ( cg.snap->ps.persistant[ PERS_SPECSTATE ] != SPECTATOR_NOT )
 			|| ( cg.snap->ps.pm_flags & PMF_FOLLOW ) )
@@ -955,7 +955,7 @@ static int CG_CalcFov()
 		zoomFov = Math::Clamp( zoomFov, 1.0f, attribFov );
 
 		// only do all the zoom stuff if the client CAN zoom
-		// FIXME: zoom control is currently hard coded to WBUTTON_ATTACK2
+		// FIXME: zoom control is currently hard coded to WBTN_ATTACK2
 		if ( BG_Weapon( cg.predictedPlayerState.weapon )->canZoom )
 		{
 			if ( cg.zoomed )
@@ -971,8 +971,8 @@ static int CG_CalcFov()
 					fov_y = fov_y + f * ( zoomFov - fov_y );
 				}
 
-				// WBUTTON_ATTACK2 isn't held so unzoom next time
-				if ( !usercmdButtonPressed( cmd.buttons, BUTTON_ATTACK2 ) || cg.snap->ps.weaponstate == WEAPON_RELOADING )
+				// WBTN_ATTACK2 isn't held so unzoom next time
+				if ( !usercmdButtonPressed( cmd.buttons, BTN_ATTACK2 ) || cg.snap->ps.weaponstate == WEAPON_RELOADING || cgs.clientinfo[ cg.clientNum ].team == TEAM_NONE )
 				{
 					cg.zoomed = false;
 					cg.zoomTime = std::min( cg.time,
@@ -988,8 +988,15 @@ static int CG_CalcFov()
 					fov_y = zoomFov + f * ( fov_y - zoomFov );
 				}
 
-				// WBUTTON_ATTACK2 is held so zoom next time
-				if ( usercmdButtonPressed( cmd.buttons, BUTTON_ATTACK2 ) && cg.snap->ps.weaponstate != WEAPON_RELOADING )
+				// WBTN_ATTACK2 is held so zoom next time.
+				//
+				// We check if the player is really part of a team,
+				// because a specator may be following a player that
+				// has the scoped gun. This avoids https://github.com/Unvanquished/Unvanquished/issues/1399
+				// If a spectator is following someone, then
+				// cg.predictedPlayerState.weapon is the weapon of
+				// the followed player.
+				if ( usercmdButtonPressed( cmd.buttons, BTN_ATTACK2 ) && cg.snap->ps.weaponstate != WEAPON_RELOADING && cgs.clientinfo[ cg.clientNum ].team != TEAM_NONE )
 				{
 					cg.zoomed = true;
 					cg.zoomTime = std::min( cg.time,
@@ -1873,6 +1880,12 @@ void CG_DrawActiveFrame( int serverTime, bool demoPlayback )
 
 	// let the client system know what our weapon and zoom settings are
 	trap_SetUserCmdValue( cg.weaponSelect, 0, cg.zoomSensitivity );
+
+	if ( cg.clientFrame == 0 )
+	{
+		trap_S_ClearLoopingSounds( true );
+		CG_StartMusic();
+	}
 
 	// this counter will be bumped for every valid scene we generate
 	cg.clientFrame++;

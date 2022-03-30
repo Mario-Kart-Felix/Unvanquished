@@ -28,6 +28,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "engine/qcommon/q_unicode.h"
 #include "Entities.h"
 #include "CBSE.h"
+#include "sg_cm_world.h"
 
 // sg_client.c -- client functions that don't happen every frame
 
@@ -287,10 +288,11 @@ gentity_t *G_SelectUnvanquishedSpawnPoint( team_t team, vec3_t preference, vec3_
 	}
 
 	// Get spawn point for selected spawner.
-	Entity* blocker = nullptr;
+	Entity* blocker;
 	Vec3    spawnPoint;
 
 	spot->entity->CheckSpawnPoint(blocker, spawnPoint);
+	ASSERT_EQ(blocker, nullptr); // TODO: CheckSpawnPoint is already called in G_SelectSpawnBuildable
 	spawnPoint.Store(origin);
 
 	VectorCopy( spot->s.angles, angles );
@@ -420,7 +422,7 @@ static void SpawnCorpse( gentity_t *ent )
 	trap_UnlinkEntity( ent );
 
 	// if client is in a nodrop area, don't leave the body
-	contents = trap_PointContents( origin, -1 );
+	contents = G_CM_PointContents( origin, -1 );
 
 	if ( contents & CONTENTS_NODROP )
 	{

@@ -74,10 +74,10 @@ struct gentityConditions_t
 	team_t   team;
 	int      stage;
 
-	class_t     classes[ PCL_NUM_CLASSES ];
-	weapon_t    weapons[ WP_NUM_WEAPONS ];
-	upgrade_t   upgrades[ UP_NUM_UPGRADES ];
-	buildable_t buildables[ BA_NUM_BUILDABLES ];
+	BoundedVector<class_t,     PCL_NUM_CLASSES>   classes;
+	BoundedVector<weapon_t,    WP_NUM_WEAPONS>    weapons;
+	BoundedVector<upgrade_t,   UP_NUM_UPGRADES>   upgrades;
+	BoundedVector<buildable_t, BA_NUM_BUILDABLES> buildables;
 
 	bool negated;
 };
@@ -300,14 +300,39 @@ struct gentity_t
 	//sound index, used by movers as well as target_speaker e.g. for looping sounds
 	int          soundIndex;
 
-	// movers
-	moverState_t moverState;
-	int          soundPos1, soundPos2;
-	int          sound1to2, sound2to1;
+	// movers {
+	// Let's try to document this a bit while I'm trying to
+	// hack some bot mover support.
+	// As a foreword, know that I don't know much about all
+	// that stuff, so, infos here might be wrong, but that'll
+	// still be better than no info at all, I'd bet.
+	// TODO I have no idea how rotating stuff work or "model" are
+	//
+	// For a start, "doors", like, automatic doors (the most
+	// common ones in unv's maps), are *not* movers, but
+	// "brushes", that is, 3D "static" volumes.
+	// Movers are essentially elevators, as one would have
+	// guessed, but might be rotating stuff, like those found
+	// on the (unofficial) mission maps, or could be mechanical
+	// traps (think about the good old trap of ceiling progressively
+	// moving toward ground, crushing stuff in between) or whatever.
 
-	vec3_t       restingPosition, activatedPosition;
-	float        rotatorAngle;
-	gentity_t    *clipBrush; // clipping brush for model doors
+	gentity_t *clipBrush; // clipping brush for model doors
+	// describes if the mover is in original state, ending state,
+	// or one of the 2 transitions between them, plus the type of
+	// mover: mover, rotator, model. Don't know more.
+	moverState_t moverState;
+	// "ent->s.pos.trBase = $NAME" when "moverState == moverState_t::.*_$NAME"
+	// In case $NAME is 1TO2 or 2TO1:
+	// ent->s.pos.trDelta = scale( ( last - next ), ( 1000 / ent->s.pos.trDuration ) )
+	vec3_t restingPosition, activatedPosition;
+
+	// sounds played when "moverState == moverState_t::.*_$NAME"
+	int soundPos1, soundPos2;
+	int sound1to2, sound2to1;
+
+	float rotatorAngle;
+	// }
 
 	char         *message;
 
@@ -364,6 +389,11 @@ struct gentity_t
 	int       splashMethodOfDeath;
 
 	int       watertype;
+	// from -inf to 3, apparently.
+	// * 0 and less: air/ground
+	// * 1: touch water I guess (toe in water)
+	// * 2: standing water, whater that means
+	// * 3: completely (eyes) underwater (not sure if this triggers swimming or if can breath)
 	int       waterlevel;
 
 	/*
@@ -420,6 +450,8 @@ struct gentity_t
 
 	bool    pointAgainstWorld; // don't use the bbox for map collisions
 
+	// handle of obstacle that was added to prevent bots to
+	// move toward it. Used for movers and big enough buildings.
 	qhandle_t   obstacleHandle;
 	botMemory_t *botMind;
 
@@ -437,7 +469,6 @@ struct gentity_t
  */
 struct clientSession_t
 {
-	int              spectatorTime; // for determining next-in-line to play
 	spectatorState_t spectatorState;
 	int              spectatorClient; // for chasecam and follow mode
 	team_t           restartTeam; //for !restart keepteams and !restart switchteams

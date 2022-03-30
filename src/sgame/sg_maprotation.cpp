@@ -126,8 +126,8 @@ Check if a map exists
 */
 bool G_MapExists( const char *name )
 {
-	// Due to filesystem changes, this is no longer the correct way to check if a map exists
-	//return trap_FS_FOpenFile( va( "maps/%s.bsp", name ), nullptr, FS_READ );
+	// Due to filesystem changes, checking whether "maps/$name.bsp" exists in the
+	// VFS is no longer the correct way to check whether a map exists
 	return trap_FindPak( va( "map-%s", name ) );
 }
 
@@ -527,10 +527,11 @@ static bool G_ParseMapRotationFile( const char *fileName )
 	fileHandle_t f;
 
 	// load the file
-	len = trap_FS_FOpenFile( fileName, &f, fsMode_t::FS_READ );
+	len = G_FOpenGameOrPakPath( fileName, f );
 
 	if ( len < 0 )
 	{
+		Log::Warn( "file '%s' not found", fileName );
 		return false;
 	}
 
@@ -1074,8 +1075,13 @@ static void G_IssueMapChange( int index, int rotation )
 	}
 
 	mrMapDescription_t  *map = &node->u.map;
-	char currentMapName[ MAX_STRING_CHARS ];
 
+	if ( strlen( map->postCommand ) > 0 )
+	{
+		trap_SendConsoleCommand( map->postCommand );
+	}
+
+	char currentMapName[ MAX_STRING_CHARS ];
 	trap_Cvar_VariableStringBuffer( "mapname", currentMapName, sizeof( currentMapName ) );
 
 	// Restart if map is the same
@@ -1103,14 +1109,6 @@ static void G_IssueMapChange( int index, int rotation )
 		{
 			trap_SendConsoleCommand( va( "map %s\n", Quote( map->name ) ) );
 		}
-	}
-
-	// Load up map defaults if g_mapConfigs is set
-	G_MapConfigs( map->name );
-
-	if ( strlen( map->postCommand ) > 0 )
-	{
-		trap_SendConsoleCommand( map->postCommand );
 	}
 }
 
@@ -1474,17 +1472,9 @@ Load a maprotation file if it exists
 */
 void G_LoadMaprotation( const char *fileName )
 {
-	// Load the file if it exists
-	if ( trap_FS_FOpenFile( fileName, nullptr, fsMode_t::FS_READ ) )
+	if ( !G_ParseMapRotationFile( fileName ) )
 	{
-		if ( !G_ParseMapRotationFile( fileName ) )
-		{
-			Log::Warn("failed to parse %s file", fileName );
-		}
-	}
-	else
-	{
-		Log::Warn( "%s file not found.", fileName );
+		Log::Warn( "failed to load map rotation '%s'", fileName );
 	}
 }
 

@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "sg_bot_ai.h"
 #include "sg_bot_util.h"
 #include "Entities.h"
+#include "CBSE.h"
 
 /*
 ======================
@@ -158,6 +159,26 @@ void AIDestroyValue( AIValue_t v )
 	}
 }
 
+// Closest alive, but (unlike the botMind->closestBuildings) not necessarily active building
+static botEntityAndDistance_t ClosestBuilding(gentity_t *self, bool alignment)
+{
+	botEntityAndDistance_t result;
+	result.distance = HUGE_QFLT;
+	result.ent = nullptr;
+	ForEntities<BuildableComponent>([&](Entity& e, BuildableComponent&) {
+		if (!e.Get<HealthComponent>()->Alive() ||
+		    (e.Get<TeamComponent>()->Team() == G_Team(self)) != alignment) {
+			return;
+		}
+		float distance = G_Distance(self, e.oldEnt);
+		if (distance < result.distance) {
+			result.distance = distance;
+			result.ent = e.oldEnt;
+		}
+	});
+	return result;
+}
+
 botEntityAndDistance_t AIEntityToGentity( gentity_t *self, AIEntity_t e )
 {
 	static const botEntityAndDistance_t nullEntity = { nullptr, HUGE_QFLT };
@@ -167,43 +188,46 @@ botEntityAndDistance_t AIEntityToGentity( gentity_t *self, AIEntity_t e )
 	{
 		return self->botMind->closestBuildings[ e ];
 	}
-	else if ( e == E_ENEMY )
+
+	switch ( e )
 	{
+	case E_NONE:
+		return ret;
+
+	case E_ENEMY:
 		return self->botMind->bestEnemy;
-	}
-	else if ( e == E_DAMAGEDBUILDING )
-	{
+
+	case E_DAMAGEDBUILDING:
 		return self->botMind->closestDamagedBuilding;
-	}
-	else if ( e == E_GOAL )
-	{
+
+	case E_FRIENDLYBUILDING:
+		return ClosestBuilding( self, true );
+
+	case E_ENEMYBUILDING:
+		return ClosestBuilding( self, false );
+
+	case E_GOAL:
 		if (self->botMind->goal.targetsValidEntity()) {
 			ret.ent = self->botMind->goal.getTargetedEntity();
 			ret.distance = DistanceToGoal( self );
-			return ret;
 		}
-	}
-	else if ( e == E_SELF )
-	{
+		return ret;
+
+	case E_SELF:
 		ret.ent = self;
 		ret.distance = 0;
 		return ret;
-	}
 
-	return ret;
+	default:
+		Log::Warn("Unknown AIEntity_t %d", e);
+		return ret;
+	}
 }
 
 static bool NodeIsRunning( gentity_t *self, AIGenericNode_t *node )
 {
-	int i;
-	for ( i = 0; i < self->botMind->numRunningNodes; i++ )
-	{
-		if ( self->botMind->runningNodes[ i ] == node )
-		{
-			return true;
-		}
-	}
-	return false;
+	auto &nodes = self->botMind->runningNodes;
+	return std::find(nodes.begin(), nodes.end(), node) != nodes.end();
 }
 
 /*
@@ -487,30 +511,27 @@ AINodeStatus_t BotEvaluateNode( gentity_t *self, AIGenericNode_t *node )
 	// reset running information on node success so sequences and selectors reset their state
 	if ( NodeIsRunning( self, node ) && status == STATUS_SUCCESS )
 	{
-		memset( self->botMind->runningNodes, 0, sizeof( self->botMind->runningNodes ) );
-		self->botMind->numRunningNodes = 0;
+		self->botMind->runningNodes.clear();
 	}
 
 	// store running information for sequence nodes and selector nodes
 	if ( status == STATUS_RUNNING )
 	{
-		if ( self->botMind->numRunningNodes == MAX_NODE_DEPTH )
-		{
-			Log::Warn( "MAX_NODE_DEPTH exceeded" );
-			return status;
-		}
-
 		// clear out previous running list when we hit a running leaf node
 		// this insures that only 1 node in a sequence or selector has the running state
 		if ( node->type == ACTION_NODE )
 		{
-			memset( self->botMind->runningNodes, 0, sizeof( self->botMind->runningNodes ) );
-			self->botMind->numRunningNodes = 0;
+			self->botMind->runningNodes.clear();
 		}
 
 		if ( !NodeIsRunning( self, node ) )
 		{
-			self->botMind->runningNodes[ self->botMind->numRunningNodes++ ] = node;
+			if ( !self->botMind->runningNodes.append(node) )
+			{
+				Log::Warn( "Bot failed to execute action: "
+						"MAX_NODE_DEPTH exceeded" );
+				return status;
+			}
 		}
 	}
 
@@ -556,11 +577,17 @@ AINodeStatus_t BotActionActivateUpgrade( gentity_t *self, AIGenericNode_t *node 
 	AIActionNode_t *action = ( AIActionNode_t * ) node;
 	upgrade_t u = ( upgrade_t ) AIUnBoxInt( action->params[ 0 ] );
 
-	if ( !BG_UpgradeIsActive( u, self->client->ps.stats ) &&
-		BG_InventoryContainsUpgrade( u, self->client->ps.stats ) )
+	if ( !BG_InventoryContainsUpgrade( u, self->client->ps.stats ) )
 	{
-		BG_ActivateUpgrade( u, self->client->ps.stats );
+		return STATUS_FAILURE;
 	}
+
+	if ( BG_UpgradeIsActive( u, self->client->ps.stats ) )
+	{
+		return STATUS_FAILURE;
+	}
+
+	BG_ActivateUpgrade( u, self->client->ps.stats );
 	return STATUS_SUCCESS;
 }
 
@@ -569,11 +596,17 @@ AINodeStatus_t BotActionDeactivateUpgrade( gentity_t *self, AIGenericNode_t *nod
 	AIActionNode_t *action = ( AIActionNode_t * ) node;
 	upgrade_t u = ( upgrade_t ) AIUnBoxInt( action->params[ 0 ] );
 
-	if ( BG_UpgradeIsActive( u, self->client->ps.stats ) &&
-		BG_InventoryContainsUpgrade( u, self->client->ps.stats ) )
+	if ( !BG_InventoryContainsUpgrade( u, self->client->ps.stats ) )
 	{
-		BG_DeactivateUpgrade( u, self->client->ps.stats );
+		return STATUS_FAILURE;
 	}
+
+	if ( !BG_UpgradeIsActive( u, self->client->ps.stats ) )
+	{
+		return STATUS_FAILURE;
+	}
+
+	BG_DeactivateUpgrade( u, self->client->ps.stats );
 	return STATUS_SUCCESS;
 }
 
@@ -997,51 +1030,18 @@ AINodeStatus_t BotActionRush( gentity_t *self, AIGenericNode_t *node )
 	return STATUS_RUNNING;
 }
 
-static AINodeStatus_t BotActionReachHealA( gentity_t *self );
-static AINodeStatus_t BotActionReachHealH( gentity_t *self );
+AINodeStatus_t BotActionHealA( gentity_t *self, AIGenericNode_t *node );
+AINodeStatus_t BotActionHealH( gentity_t *self, AIGenericNode_t *node );
 AINodeStatus_t BotActionHeal( gentity_t *self, AIGenericNode_t *node )
 {
-	bool needsMedikit = G_Team(self) == TEAM_HUMANS
-			     && !BG_InventoryContainsUpgrade( UP_MEDKIT, self->client->ps.stats );
-	bool fullyHealed = Entities::HasFullHealth(self) && !needsMedikit;
-
-	if ( self->botMind->currentNode != node )
+	switch( G_Team( self ) )
 	{
-		if ( fullyHealed )
-		{
-			return STATUS_FAILURE;
-		}
-
-		if ( !BotChangeGoalEntity( self, BotGetHealTarget( self ) ) )
-		{
-			return STATUS_FAILURE;
-		}
-		self->botMind->currentNode = node;
-	}
-
-	if ( fullyHealed )
-	{
-		return STATUS_SUCCESS;
-	}
-
-	if ( !self->botMind->goal.targetsValidEntity() )
-	{
-		return STATUS_FAILURE;
-	}
-
-	// Can't heal at powered off buildables
-	if ( !self->botMind->goal.getTargetedEntity()->powered )
-	{
-		return STATUS_FAILURE;
-	}
-
-	if ( G_Team( self ) == TEAM_HUMANS )
-	{
-		return BotActionReachHealH( self );
-	}
-	else
-	{
-		return BotActionReachHealA( self );
+		case TEAM_HUMANS:
+			return BotActionHealH( self, node );
+		case TEAM_ALIENS:
+			return BotActionHealA( self, node );
+		default:
+			ASSERT_UNREACHABLE();
 	}
 }
 
@@ -1065,21 +1065,76 @@ AINodeStatus_t BotActionResetStuckTime( gentity_t *self, AIGenericNode_t* )
 AINodeStatus_t BotActionGesture( gentity_t *self, AIGenericNode_t* )
 {
 	usercmd_t *botCmdBuffer = &self->botMind->cmdBuffer;
-	usercmdPressButton( botCmdBuffer->buttons, BUTTON_GESTURE );
+	usercmdPressButton( botCmdBuffer->buttons, BTN_GESTURE );
 	return AINodeStatus_t::STATUS_SUCCESS;
 }
 
 /*
 	alien specific actions
 */
-static AINodeStatus_t BotActionReachHealA( gentity_t *self )
+AINodeStatus_t BotActionHealA( gentity_t *self, AIGenericNode_t *node )
 {
-	if ( G_Team( self ) != TEAM_ALIENS )
+	if ( self->botMind->currentNode != node )
+	{
+		// already fully healed
+		if ( Entities::HasFullHealth(self) )
+		{
+			return STATUS_FAILURE;
+		}
+
+		gentity_t const *healTarget = nullptr;
+
+		if ( self->botMind->closestBuildings[BA_A_BOOSTER].ent )
+		{
+			healTarget = self->botMind->closestBuildings[BA_A_BOOSTER].ent;
+		}
+		else if ( self->botMind->closestBuildings[BA_A_OVERMIND].ent )
+		{
+			healTarget = self->botMind->closestBuildings[BA_A_OVERMIND].ent;
+		}
+		else if ( self->botMind->closestBuildings[BA_A_SPAWN].ent )
+		{
+			healTarget = self->botMind->closestBuildings[BA_A_SPAWN].ent;
+		}
+
+		if ( !healTarget )
+		{
+			return STATUS_FAILURE;
+		}
+
+		if ( !BotChangeGoalEntity( self, healTarget ) )
+		{
+			return STATUS_FAILURE;
+		}
+
+		self->botMind->currentNode = node;
+	}
+
+	//we are fully healed now
+	if ( Entities::HasFullHealth(self) )
+	{
+		return STATUS_SUCCESS;
+	}
+
+	// Can't heal at dead targets.
+	if ( !self->botMind->goal.targetsValidEntity() )
 	{
 		return STATUS_FAILURE;
 	}
 
-	if ( !GoalInRange( self, 100 ) )
+	// retrieve creep size or booster's range to have proper distance
+	int targetType = self->botMind->goal.getTargetedEntity()->s.modelindex;
+	float dist = -1; // minus one to make sure to step on creep
+	if ( targetType != BA_A_BOOSTER )
+	{
+		dist += BG_Buildable( targetType )->creepSize;
+	}
+	else
+	{
+		dist += REGEN_BOOSTER_RANGE;
+	}
+
+	if ( !GoalInRange( self, dist ) )
 	{
 		BotMoveToGoal( self );
 	}
@@ -1089,28 +1144,72 @@ static AINodeStatus_t BotActionReachHealA( gentity_t *self )
 /*
 	human specific actions
 */
-static AINodeStatus_t BotActionReachHealH( gentity_t *self )
+AINodeStatus_t BotActionHealH( gentity_t *self, AIGenericNode_t *node )
 {
 	vec3_t targetPos;
 	vec3_t myPos;
+	VectorCopy( self->s.origin, myPos );
 
-	if ( G_Team( self ) != TEAM_HUMANS )
+	bool fullyHealed = Entities::HasFullHealth(self) &&
+		BG_InventoryContainsUpgrade( UP_MEDKIT, self->client->ps.stats );
+
+	if ( self->botMind->currentNode != node )
+	{
+		if ( fullyHealed )
+		{
+			return STATUS_FAILURE;
+		}
+
+		if ( !BotChangeGoalEntity( self, self->botMind->closestBuildings[ BA_H_MEDISTAT ].ent ) )
+		{
+			return STATUS_FAILURE;
+		}
+		self->botMind->currentNode = node;
+	}
+
+	if ( fullyHealed )
+	{
+		return STATUS_SUCCESS;
+	}
+
+	// Can't heal at dead targets.
+	if ( !self->botMind->goal.targetsValidEntity() )
 	{
 		return STATUS_FAILURE;
 	}
 
-	self->botMind->goal.getPos( targetPos );
-	VectorCopy( self->s.origin, myPos );
+	//this medi is no longer powered so signal that the goal is unusable
+	if ( !self->botMind->goal.getTargetedEntity()->powered )
+	{
+		return STATUS_FAILURE;
+	}
+
+	auto const& goal = self->botMind->goal;
+	const gentity_t * medistation = goal.getTargetedEntity();
+
+	goal.getPos( targetPos );
 	targetPos[2] += BG_BuildableModelConfig( BA_H_MEDISTAT )->maxs[2];
 	myPos[2] += self->r.mins[2]; //mins is negative
+	float distanceSquared = DistanceSquared( myPos, targetPos );
+
+	// If medistation is busy, do something else until can go on it anew.
+	// See https://github.com/Unvanquished/Unvanquished/pull/1598
+	// (It would be nice to allow the BT to check for the failure cause.
+	//  How? That's a good question)
+	if ( medistation->target && medistation->target.get() != self
+	     && distanceSquared > Square( 200 ) )
+	{
+		return STATUS_FAILURE;
+	}
 
 	//keep moving to the medi until we are on top of it
-	if ( DistanceSquared( myPos, targetPos ) > Square( BG_BuildableModelConfig( BA_H_MEDISTAT )->mins[1] ) )
+	if ( distanceSquared > Square( BG_BuildableModelConfig( BA_H_MEDISTAT )->mins[1] ) )
 	{
 		BotMoveToGoal( self );
 	}
 	return STATUS_RUNNING;
 }
+
 AINodeStatus_t BotActionRepair( gentity_t *self, AIGenericNode_t *node )
 {
 	vec3_t forward;
@@ -1259,21 +1358,27 @@ AINodeStatus_t BotActionBuy( gentity_t *self, AIGenericNode_t *node )
 		return STATUS_FAILURE;
 	}
 
-	if ( GoalInRange( self, ENTITY_BUY_RANGE ) )
+	if ( GoalInRange( self, ENTITY_USE_RANGE ) )
 	{
 		if ( numUpgrades )
 		{
 			BotSellUpgrades( self );
 			for ( i = 0; i < numUpgrades; i++ )
 			{
-				BotBuyUpgrade( self, upgrades[i] );
+				if ( !BotBuyUpgrade( self, upgrades[i] ) )
+				{
+					return STATUS_FAILURE;
+				}
 			}
 		}
 
 		if ( weapon != WP_NONE )
 		{
 			BotSellWeapons( self );
-			BotBuyWeapon( self, weapon );
+			if ( !BotBuyWeapon( self, weapon ) )
+			{
+				return STATUS_FAILURE;
+			}
 		}
 
 		// make sure that we're not using the blaster

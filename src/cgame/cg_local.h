@@ -1057,10 +1057,10 @@ enum sayType_t
 
 struct WeaponOffsets
 {
-	Vec3 bob;
+	vec3_t bob;
 
-	Vec3 angles;
-	Vec3 angvel;
+	vec3_t angles;
+	vec3_t angvel;
 
 	WeaponOffsets operator+=( WeaponOffsets );
 	WeaponOffsets operator*( float );
@@ -1204,9 +1204,9 @@ struct cg_t
 	bool                testGun;
 
 	int                     spawnTime; // fovwarp
-	int                     weapon1Time; // time when BUTTON_ATTACK went t->f f->t
-	int                     weapon2Time; // time when BUTTON_ATTACK2 went t->f f->t
-	int                     weapon3Time; // time when BUTTON_ATTACK3 went t->f f->t
+	int                     weapon1Time; // time when BTN_ATTACK went t->f f->t
+	int                     weapon2Time; // time when BTN_ATTACK2 went t->f f->t
+	int                     weapon3Time; // time when BTN_ATTACK3 went t->f f->t
 	bool                weapon1Firing;
 	bool                weapon2Firing;
 	bool                weapon3Firing;
@@ -1225,6 +1225,8 @@ struct cg_t
 	float                   mediaLoadingFraction;
 	float                   buildableLoadingFraction;
 	float                   characterLoadingFraction;
+	float navmeshLoadingFraction;
+	bool loadingNavmesh;
 
 	int                     lastBuildAttempt;
 	int                     lastEvolveAttempt;
@@ -1257,8 +1259,6 @@ struct cg_t
 	int                     beaconCount;
 	cbeacon_t               *highlightedBeacon;
 	beaconRocket_t          beaconRocket;
-
-	int                     tagScoreTime;
 
 	// pmove params
 	struct {
@@ -1736,7 +1736,7 @@ extern Cvar::Cvar<int> cg_teslaTrailTime;
 extern Cvar::Cvar<float> cg_runpitch;
 extern Cvar::Cvar<float> cg_runroll;
 extern Cvar::Cvar<float> cg_swingSpeed;
-extern Cvar::Range<Cvar::Cvar<int>> cg_shadows;
+extern shadowingMode_t cg_shadows;
 extern Cvar::Cvar<bool> cg_playerShadows;
 extern Cvar::Cvar<bool> cg_buildableShadows;
 extern Cvar::Cvar<bool> cg_drawTimer;
@@ -1791,7 +1791,6 @@ extern Cvar::Cvar<bool> cg_drawSurfNormal;
 extern Cvar::Range<Cvar::Cvar<int>> cg_drawBBOX;
 extern Cvar::Cvar<bool> cg_drawEntityInfo;
 extern Cvar::Cvar<int> cg_wwSmoothTime;
-extern Cvar::Cvar<bool> cg_depthSortParticles;
 extern Cvar::Cvar<bool> cg_bounceParticles;
 extern Cvar::Cvar<int> cg_consoleLatency;
 extern Cvar::Range<Cvar::Cvar<int>> cg_lightFlare;
@@ -1863,7 +1862,6 @@ void       CG_FocusEvent( bool focus );
 bool   CG_ClientIsReady( int clientNum );
 void       CG_BuildSpectatorString();
 
-bool   CG_FileExists( const char *filename );
 void       CG_UpdateBuildableRangeMarkerMask();
 void       CG_RegisterGrading( int slot, const char *str );
 
@@ -2112,6 +2110,7 @@ void     CG_ShowScores_f();
 // cg_servercmds.c
 //
 void CG_ExecuteServerCommands( snapshot_t* snap );
+void CG_SetMapNameFromServerinfo();
 void CG_ParseServerinfo();
 void CG_SetConfigValues();
 void CG_ShaderStateChanged();
@@ -2310,7 +2309,6 @@ void Rocket_RegisterDataFormatter( const char *name );
 void Rocket_DataFormatterRawData( int handle, char *name, int nameLength, char *data, int dataLength );
 void Rocket_DataFormatterFormattedData( int handle, const char *data, bool parseQuake );
 void Rocket_GetElementTag( char *tag, int length );
-void Rocket_SetElementDimensions( float x, float y );
 void Rocket_RegisterElement( const char *tag );
 void Rocket_SetAttribute( const char *name, const char *id, const char *attribute, const char *value );
 void Rocket_GetAttribute( const char *name, const char *id, const char *attribute, char *out, int length );

@@ -24,10 +24,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ===========================================================================
 */
 
+#include "common/FileSystem.h"
 #include "sg_local.h"
 #include "CustomSurfaceFlags.h"
 #include "Entities.h"
 #include "CBSE.h"
+#include "sg_cm_world.h"
 
 /**
  * @return Whether the means of death allow for an under-attack warning.
@@ -540,7 +542,7 @@ void HArmoury_Use( gentity_t *self, gentity_t*, gentity_t *activator )
 		return;
 	}
 
-	if ( !self->powered )
+	if ( !self->powered || Entities::IsDead(self) )
 	{
 		G_TriggerMenu( activator->client->ps.clientNum, MN_H_NOTPOWERED );
 		return;
@@ -1571,7 +1573,7 @@ itemBuildError_t G_CanBuild( gentity_t *ent, buildable_t buildable, int /*distan
 		reason = IBE_NORMAL;
 	}
 
-	contents = trap_PointContents( entity_origin, -1 );
+	contents = G_CM_PointContents( entity_origin, -1 );
 
 	// Prepare replacement of other buildables.
 	itemBuildError_t replacementError;
@@ -1990,6 +1992,16 @@ static gentity_t *SpawnBuildable( gentity_t *builder, buildable_t buildable, con
 		vec3_t maxs;
 		VectorCopy( built->r.mins, mins );
 		VectorCopy( built->r.maxs, maxs );
+		// HACK: work around bots unable to reach armory due to
+		// navmesh margins in *some* situations.
+		// fixVal is choosen to work on all known cases:
+		// * 0.9 was not enough on urbanp2 but was on chasm
+		// * 0.8 was enough on both
+		// Note that said bug is not reported, but notably happens
+		// on chasm with default layout as of 0.52.1
+		const float fixVal = 0.8;
+		mins[0] *= fixVal; mins[1] *= fixVal;
+		maxs[0] *= fixVal; maxs[1] *= fixVal;
 		VectorAdd( mins, origin, mins );
 		VectorAdd( maxs, origin, maxs );
 		G_BotAddObstacle( mins, maxs, &built->obstacleHandle );
@@ -2297,10 +2309,14 @@ int G_LayoutList( const char *map, char *list, int len )
 	return count + 1;
 }
 
+bool G_LayoutExists( Str::StringRef map, Str::StringRef layout )
+{
+	std::string path = Str::Format( "layouts/%s/%s.dat", map, layout );
+	return FS::PakPath::FileExists( path ) || FS::HomePath::FileExists( path );
+}
+
 void G_LayoutSelect()
 {
-	char fileName[ MAX_OSPATH ];
-	char fileName2[ MAX_OSPATH ];
 	char layouts[ MAX_CVAR_VALUE_STRING ];
 	char layouts2[ MAX_CVAR_VALUE_STRING ];
 	const char *layoutPtr;
@@ -2330,15 +2346,12 @@ void G_LayoutSelect()
 	// no layout specified
 	if ( !layouts[ 0 ] )
 	{
-		Com_sprintf( fileName, sizeof( fileName ), "layouts/%s/default.dat", map );
-		Com_sprintf( fileName2, sizeof( fileName ), "layouts/%s/builtin.dat", map );
-
 		//use default layout if available
-		if ( trap_FS_FOpenFile( fileName, nullptr, fsMode_t::FS_READ ) > 0 )
+		if ( G_LayoutExists( map, "default" ) )
 		{
 			strcpy( layouts, "default" );
 		}
-		else if ( trap_FS_FOpenFile( fileName2, nullptr, fsMode_t::FS_READ ) > 0 )
+		else if ( G_LayoutExists( map, "builtin" ) )
 		{
 			strcpy( layouts, "builtin" );
 		}
@@ -2363,9 +2376,7 @@ void G_LayoutSelect()
 			continue;
 		}
 
-		Com_sprintf( fileName, sizeof( fileName ), "layouts/%s/%s.dat", map, layout );
-
-		if ( trap_FS_FOpenFile( fileName, nullptr, fsMode_t::FS_READ ) > 0 )
+		if ( G_LayoutExists( map, layout ) )
 		{
 			Q_strcat( layouts, sizeof( layouts ), layout );
 			Q_strcat( layouts, sizeof( layouts ), " " );
@@ -2431,7 +2442,7 @@ void G_LayoutLoad()
 	}
 
 	trap_Cvar_VariableStringBuffer( "mapname", map, sizeof( map ) );
-	len = trap_FS_FOpenFile( va( "layouts/%s/%s.dat", map, level.layout ), &f, fsMode_t::FS_READ );
+	len = G_FOpenGameOrPakPath( va( "layouts/%s/%s.dat", map, level.layout ), f );
 
 	if ( len < 0 )
 	{

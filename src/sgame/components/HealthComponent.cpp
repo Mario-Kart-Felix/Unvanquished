@@ -26,7 +26,7 @@ void HealthComponent::HandlePrepareNetCode() {
 			client->pers.infoChangeTime = level.time;
 		}
 		client->ps.stats[STAT_HEALTH] = transmittedHealth;
-		client->ps.stats[STAT_MAX_HEALTH] = (int)std::ceil(maxHealth);
+		client->ps.stats[STAT_MAX_HEALTH] = static_cast<int>( std::ceil( maxHealth ) );// TODO: remove in 0.53
 	} else if (entity.oldEnt->s.eType == entityType_t::ET_BUILDABLE) {
 		entity.oldEnt->s.generic1 = std::max(transmittedHealth, 0);
 	}
@@ -243,7 +243,7 @@ Util::optional<Vec3> direction, int flags, meansOfDeath_t meansOfDeath) {
 }
 
 void HealthComponent::SetHealth(float health) {
-	Math::Clamp(health, FLT_EPSILON, maxHealth);
+	health = Math::Clamp(health, FLT_EPSILON, maxHealth);
 
 	healthLogger.Debug("Changing health: %3.1f → %3.1f.", this->health, health);
 

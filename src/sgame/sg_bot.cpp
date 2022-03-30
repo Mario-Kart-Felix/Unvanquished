@@ -35,28 +35,22 @@ static AITreeList_t treeList;
 Bot management functions
 =======================
 */
-static struct
-{
-	int count;
-	struct
-	{
-		char *name;
-		bool inUse;
-	} name[MAX_CLIENTS];
-} botNames[NUM_TEAMS];
+struct nameInfo_t {
+	std::string name;
+	bool inUse;
+};
+static BoundedVector<nameInfo_t, MAX_CLIENTS> botNames[NUM_TEAMS];
 
 static void G_BotListTeamNames( gentity_t *ent, const char *heading, team_t team, const char *marker )
 {
-	int i;
-
-	if ( botNames[team].count )
+	if ( !botNames[team].empty() )
 	{
 		ADMP( heading );
 		ADMBP_begin();
 
-		for ( i = 0; i < botNames[team].count; ++i )
+		for ( nameInfo_t &nameInfo : botNames[team] )
 		{
-			ADMBP( va( "  %s^* %s", botNames[team].name[i].inUse ? marker : " ", botNames[team].name[i].name ) );
+			ADMBP( va( "  %s^* %s", nameInfo.inUse ? marker : " ", nameInfo.name.c_str() ) );
 		}
 
 		ADMBP_end();
@@ -71,68 +65,47 @@ void G_BotListNames( gentity_t *ent )
 
 bool G_BotClearNames()
 {
-	int i;
-
-	for ( i = 0; i < botNames[TEAM_ALIENS].count; ++i )
+	for ( auto &teamsBotNames : botNames )
 	{
-		if ( botNames[TEAM_ALIENS].name[i].inUse )
+		for ( nameInfo_t &nameInfo : teamsBotNames )
 		{
-			return false;
+			if ( nameInfo.inUse )
+			{
+				return false;
+			}
 		}
 	}
 
-	for ( i = 0; i < botNames[TEAM_HUMANS].count; ++i )
+	for ( auto &teamsBotNames : botNames )
 	{
-		if ( botNames[TEAM_HUMANS].name[i].inUse )
-		{
-			return false;
-		}
+		teamsBotNames.clear();
 	}
-
-	for ( i = 0; i < botNames[TEAM_ALIENS].count; ++i )
-	{
-		BG_Free( botNames[TEAM_ALIENS].name[i].name );
-	}
-
-	for ( i = 0; i < botNames[TEAM_HUMANS].count; ++i )
-	{
-		BG_Free( botNames[TEAM_HUMANS].name[i].name );
-	}
-
-	botNames[TEAM_ALIENS].count = 0;
-	botNames[TEAM_HUMANS].count = 0;
 
 	return true;
 }
 
 int G_BotAddNames( team_t team, int arg, int last )
 {
-	int  i = botNames[team].count;
 	int  added = 0;
 	char name[MAX_NAME_LENGTH];
 
-	while ( arg < last && i < MAX_CLIENTS )
+	while ( arg < last )
 	{
-		int j, t;
-
 		trap_Argv( arg++, name, sizeof( name ) );
 
 		// name already in the list? (quick check, including colours & invalid)
-		for ( t = 1; t < NUM_TEAMS; ++t )
+		for ( int t = 1; t < NUM_TEAMS; ++t )
 		{
-			for ( j = 0; j < botNames[t].count; ++j )
+			for ( nameInfo_t &nameInfo : botNames[t] )
 			{
-				if ( !Q_stricmp( botNames[t].name[j].name, name ) )
+				if ( !Q_stricmp( nameInfo.name.c_str(), name ) )
 				{
 					goto next;
 				}
 			}
 		}
 
-		botNames[team].name[i].name = ( char * )BG_Alloc( strlen( name ) + 1 );
-		strcpy( botNames[team].name[i].name, name );
-
-		botNames[team].count = ++i;
+		botNames[team].append({ name, /*.inUse = */ false });
 		++added;
 
 		next:
@@ -142,24 +115,36 @@ int G_BotAddNames( team_t team, int arg, int last )
 	return added;
 }
 
-static char *G_BotSelectName( team_t team )
+static const char *G_BotSelectName( team_t team )
 {
-	unsigned int choice;
-
-	if ( botNames[team].count < 1 )
+	if ( botNames[team].empty() )
 	{
 		return nullptr;
 	}
 
-	choice = rand() % botNames[team].count;
-
-	for ( int i = 0; i < botNames[team].count; ++i )
+	unsigned int count = 0;
+	for ( nameInfo_t &nameInfo : botNames[team] )
 	{
-		if ( !botNames[team].name[choice].inUse )
+		if ( !nameInfo.inUse )
 		{
-			return botNames[team].name[choice].name;
+			count++;
 		}
-		choice = ( choice + 1 ) % botNames[team].count;
+	}
+
+	unsigned int choice = rand() % count;
+
+	unsigned int index = 0;
+	for ( nameInfo_t &nameInfo : botNames[team] )
+	{
+		if ( nameInfo.inUse )
+		{
+			continue;
+		}
+
+		if (index++ == choice)
+		{
+			return nameInfo.name.c_str();
+		}
 	}
 
 	return nullptr;
@@ -167,11 +152,11 @@ static char *G_BotSelectName( team_t team )
 
 static void G_BotNameUsed( team_t team, const char *name, bool inUse )
 {
-	for ( int i = 0; i < botNames[team].count; ++i )
+	for ( nameInfo_t &nameInfo : botNames[team] )
 	{
-		if ( !Q_stricmp( name, botNames[team].name[i].name ) )
+		if ( !Q_stricmp( name, nameInfo.name.c_str() ) )
 		{
-			botNames[team].name[i].inUse = inUse;
+			nameInfo.inUse = inUse;
 			return;
 		}
 	}
@@ -217,8 +202,7 @@ void G_BotChangeBehavior( int clientNum, const char* behavior )
 
 bool G_BotSetBehavior( botMemory_t *botMind, const char* behavior )
 {
-	memset( botMind->runningNodes, 0, sizeof( botMind->runningNodes ) );
-	botMind->numRunningNodes = 0;
+	botMind->runningNodes.clear();
 	botMind->currentNode = nullptr;
 	memset( &botMind->nav, 0, sizeof( botMind->nav ) );
 	BotResetEnemyQueue( &botMind->enemyQueue );
@@ -306,6 +290,7 @@ bool G_BotAdd( const char *name, team_t team, int skill, const char *behavior, b
 
 	// register user information
 	userinfo[0] = '\0';
+	Info_SetValueForKey( userinfo, "cg_unlagged", "0", false ); // bots do not lag
 	Info_SetValueForKey( userinfo, "name", name ? name : "", false ); // allow defaulting
 	Info_SetValueForKey( userinfo, "rate", "25000", false );
 	Info_SetValueForKey( userinfo, "snaps", "20", false );
@@ -375,9 +360,7 @@ void G_BotDel( int clientNum )
 
 void G_BotDelAllBots()
 {
-	int i;
-
-	for ( i = 0; i < MAX_CLIENTS; i++ )
+	for ( int i = 0; i < MAX_CLIENTS; i++ )
 	{
 		if ( g_entities[i].r.svFlags & SVF_BOT && level.clients[i].pers.connected != CON_DISCONNECTED )
 		{
@@ -385,19 +368,17 @@ void G_BotDelAllBots()
 		}
 	}
 
-	for ( i = 0; i < botNames[TEAM_ALIENS].count; ++i )
+	for ( auto &teamsBotNames : botNames )
 	{
-		botNames[TEAM_ALIENS].name[i].inUse = false;
+		for ( nameInfo_t &nameInfo : teamsBotNames )
+		{
+			nameInfo.inUse = false;
+		}
 	}
 
-	for ( i = 0; i < botNames[TEAM_HUMANS].count; ++i )
+	for ( auto &team : level.team )
 	{
-		botNames[TEAM_HUMANS].name[i].inUse = false;
-	}
-
-	for (team_t team : {TEAM_ALIENS, TEAM_HUMANS})
-	{
-		level.team[team].botFillTeamSize = 0;
+		team.botFillTeamSize = 0;
 	}
 }
 
@@ -521,8 +502,7 @@ void G_BotSpectatorThink( gentity_t *self )
 	memset( &self->botMind->nav, 0, sizeof( self->botMind->nav ) );
 	self->botMind->futureAimTime = 0;
 	self->botMind->futureAimTimeInterval = 0;
-	self->botMind->numRunningNodes = 0;
-	memset( self->botMind->runningNodes, 0, sizeof( self->botMind->runningNodes ) );
+	self->botMind->runningNodes.clear();
 
 	if ( self->client->sess.restartTeam == TEAM_NONE )
 	{
@@ -560,13 +540,24 @@ void G_BotIntermissionThink( gclient_t *client )
 	client->readyToExit = true;
 }
 
-void G_BotInit()
+// Initialization happens whenever someone first tries to add a bot.
+// This incurs some delay (a few tenths of a second), but on servers bots
+// are normally added at the beginning of the round so it shouldn't be noticeable.
+bool G_BotInit()
 {
-	G_BotNavInit( );
+	if ( !G_BotNavInit() )
+	{
+		Log::Notice( "Failed to load navmeshes" );
+		G_BotNavCleanup();
+		return false;
+	}
+
 	if ( treeList.maxTrees == 0 )
 	{
 		InitTreeList( &treeList );
 	}
+
+	return true;
 }
 
 void G_BotCleanup()
@@ -639,11 +630,11 @@ void botMemory_t::doSprint( int jumpCost, int stamina, usercmd_t& cmd )
 	exhausted = exhausted || ( botSkill.level >= 5 && stamina <= jumpCost + jumpCost / 10 );
 	if ( !exhausted && wantSprinting )
 	{
-		usercmdPressButton( cmd.buttons, BUTTON_SPRINT );
+		usercmdPressButton( cmd.buttons, BTN_SPRINT );
 	}
 	else
 	{
-		usercmdReleaseButton( cmd.buttons, BUTTON_SPRINT );
+		usercmdReleaseButton( cmd.buttons, BTN_SPRINT );
 	}
 
 	exhausted = exhausted && stamina <= jumpCost * 2;

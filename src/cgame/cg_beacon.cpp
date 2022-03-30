@@ -55,7 +55,7 @@ void CG_LoadBeaconsConfig()
 	bc->hudCenter[ 0 ] = vw / 2;
 	bc->hudCenter[ 1 ] = vh / 2;
 
-	fd = Parse_LoadSourceHandle( path );
+	fd = Parse_LoadSourceHandle( path, trap_FS_OpenPakFile );
 	if ( !fd )
 		return;
 
@@ -327,10 +327,11 @@ static void MarkRelevantBeacons()
 	{
 		cbeacon_t *beacon = cg.beacons[ beaconNum ];
 
-		// Only tagged buildables are relevant so far.
+		// Only tagged, working buildables are relevant so far.
 		if( beacon->type != BCT_TAG ||
 		    ( beacon->flags & EF_BC_TAG_PLAYER ) ||
-		    ( beacon->flags & EF_BC_DYING ) )
+		    ( beacon->flags & EF_BC_DYING ) ||
+		    !( cg_entities[ beacon->target ].currentState.eFlags & EF_B_POWERED ) )
 		{
 			continue;
 		}
@@ -341,8 +342,10 @@ static void MarkRelevantBeacons()
 			if( ( team == TEAM_ALIENS && beacon->data == BA_A_BOOSTER ) ||
 			    ( team == TEAM_HUMANS && beacon->data == BA_H_MEDISTAT ) )
 			{
-				if( ps->stats[ STAT_HEALTH ] < ps->stats[ STAT_MAX_HEALTH ] / 2 )
+				if( ps->stats[ STAT_HEALTH ] < BG_Class( ps->stats[ STAT_CLASS ] )->health / 2 )
+				{
 					beacon->type = BCT_HEALTH;
+				}
 				tofind &= ~1;
 			}
 		}

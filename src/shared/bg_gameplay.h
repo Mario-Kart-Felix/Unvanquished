@@ -47,8 +47,6 @@ extern float ABUILDER_BLOB_SPEED;
 extern float ABUILDER_BLOB_SPEED_MOD;
 extern int   ABUILDER_BLOB_LOCK_TIME;
 extern int   ABUILDER_BLOB_TIME;
-#define ABUILDER_BLOB_FIRE_IMMUNITY   3000   // in ms, friendly buildables gain immunity for fire on hit
-#define ABUILDER_BLOB_FIRE_STOP_RANGE 20     // granger spit that hits a surface kills environmental fire in this range
 
 extern int   LEVEL0_BITE_DMG;
 extern float LEVEL0_BITE_RANGE;
@@ -307,8 +305,7 @@ extern int   MEDKIT_STARTUP_SPEED;
 
 #define QU_TO_METER                        0.03125 // in m/qu
 
-#define ENTITY_USE_RANGE                   64.0f
-#define ENTITY_BUY_RANGE                   128.0f
+#define ENTITY_USE_RANGE                   128.0f
 
 // fire
 #define FIRE_MIN_DISTANCE                  20.0f

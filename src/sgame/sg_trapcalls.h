@@ -25,6 +25,8 @@ along with Unvanquished Source Code.  If not, see <http://www.gnu.org/licenses/>
 #ifndef SG_TRAPCALLS_H_
 #define SG_TRAPCALLS_H_
 
+struct gentity_t;
+
 int              trap_Milliseconds();
 void             trap_Cvar_Set( const char *var_name, const char *value );
 int              trap_Cvar_VariableIntegerValue( const char *var_name );
@@ -36,8 +38,8 @@ void             trap_SendConsoleCommand( const char *text );
 int              trap_FS_FOpenFile( const char *qpath, fileHandle_t *f, fsMode_t mode );
 int              trap_FS_Read( void *buffer, int len, fileHandle_t f );
 int              trap_FS_Write( const void *buffer, int len, fileHandle_t f );
-void             trap_FS_Rename( const char *from, const char *to );
 void             trap_FS_FCloseFile( fileHandle_t f );
+// TODO: in many cases we want only VFS (pakpath) files, not VFS + gamepath which this gives
 int              trap_FS_GetFileList( const char *path, const char *extension, char *listbuf, int bufsize );
 void             trap_LocateGameData( int numGEntities, int sizeofGEntity_t, int sizeofGClient );
 void             trap_DropClient( int clientNum, const char *reason );
@@ -48,7 +50,6 @@ void             trap_UnlinkEntity( gentity_t *ent );
 int              trap_EntitiesInBox( const vec3_t mins, const vec3_t maxs, int *list, int maxcount );
 bool         trap_EntityContact( const vec3_t mins, const vec3_t maxs, const gentity_t *ent );
 void             trap_Trace( trace_t *results, const vec3_t start, const vec3_t mins, const vec3_t maxs, const vec3_t end, int passEntityNum, int contentmask , int skipmask);
-int              trap_PointContents( const vec3_t point, int passEntityNum );
 void             trap_SetBrushModel( gentity_t *ent, const char *name );
 bool         trap_InPVS( const vec3_t p1, const vec3_t p2 );
 bool         trap_InPVSIgnorePortals( const vec3_t p1, const vec3_t p2 );

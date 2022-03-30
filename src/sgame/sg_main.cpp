@@ -163,7 +163,7 @@ Cvar::Cvar<std::string> g_nextMapLayouts("g_nextMapLayouts", "list of layouts (o
 Cvar::Cvar<std::string> g_initialMapRotation("g_initialMapRotation", "map rotation to use on server startup", Cvar::NONE, "rotation1");
 Cvar::Cvar<std::string> g_mapLog("g_mapLog", "contains results of recent games", Cvar::NONE, "");
 Cvar::Cvar<std::string> g_mapStartupMessage("g_mapStartupMessage", "message sent to players on connection (reset after game)", Cvar::NONE, "");
-Cvar::Cvar<int> g_mapStartupMessageDelay("g_mapStartupMessageDelay", "show g_mapStartupMessage x milliseconds after connection", Cvar::LATCH, 5000);
+Cvar::Cvar<int> g_mapStartupMessageDelay("g_mapStartupMessageDelay", "show g_mapStartupMessage x milliseconds after connection", Cvar::NONE, 5000);
 
 Cvar::Cvar<bool> g_debugVoices("g_debugVoices", "print sgame's list of vsays on startup", Cvar::NONE, false);
 Cvar::Cvar<bool> g_enableVsays("g_voiceChats", "allow vsays (prerecorded audio messages)", Cvar::NONE, true);
@@ -177,8 +177,8 @@ Cvar::Cvar<float> g_sayAreaRange("g_sayAreaRange", "distance for area chat messa
 Cvar::Cvar<int> g_floodMaxDemerits("g_floodMaxDemerits", "client message rate control (lower = stricter)", Cvar::NONE, 5000);
 Cvar::Cvar<int> g_floodMinTime("g_floodMinTime", "mute period after flooding, in milliseconds", Cvar::NONE, 2000);
 
-Cvar::Cvar<std::string> g_defaultLayouts("g_defaultLayouts", "layouts to pick randomly from each map", Cvar::LATCH, "");
-Cvar::Cvar<std::string> g_layouts("g_layouts", "layouts for next map (cleared after use)", Cvar::LATCH, "");
+Cvar::Cvar<std::string> g_defaultLayouts("g_defaultLayouts", "layouts to pick randomly from each map", Cvar::NONE, "");
+Cvar::Cvar<std::string> g_layouts("g_layouts", "layouts for next map (cleared after use)", Cvar::NONE, "");
 Cvar::Cvar<bool> g_layoutAuto("g_layoutAuto", "pick arbitrary layout instead of builtin", Cvar::NONE, false);
 
 Cvar::Cvar<bool> g_emoticonsAllowedInNames("g_emoticonsAllowedInNames", "allow [emoticon]s in player names", Cvar::NONE, true);
@@ -220,7 +220,7 @@ Cvar::Cvar<bool>   g_autoPause("g_autoPause", "pause empty server", Cvar::NONE, 
 // bot buy cvars
 Cvar::Cvar<bool> g_bot_buy("g_bot_buy", "whether bots use the Armoury", Cvar::NONE, true);
 // human weapons
-Cvar::Cvar<bool> g_bot_ckit("g_bot_ckit", "whether bots buy the Construction Kit", Cvar::NONE, true);
+Cvar::Cvar<bool> g_bot_ckit("g_bot_ckit", "whether bots buy the Construction Kit (only current use is for repairs)", Cvar::NONE, true);
 Cvar::Cvar<bool> g_bot_rifle("g_bot_rifle", "whether bots use SMG", Cvar::NONE, true);
 Cvar::Cvar<bool> g_bot_painsaw("g_bot_painsaw", "whether bots buy the Painsaw", Cvar::NONE, true);
 Cvar::Cvar<bool> g_bot_shotgun("g_bot_shotgun", "whether bots buy the Shotgun", Cvar::NONE, true);
@@ -254,6 +254,9 @@ Cvar::Cvar<bool> g_bot_level3("g_bot_level3", "whether bots use non-advanced Dra
 Cvar::Cvar<bool> g_bot_level3upg("g_bot_level3upg", "whether bots use Advanced Dragoon", Cvar::NONE, true);
 Cvar::Cvar<bool> g_bot_level4("g_bot_level4", "whether bots use Tyrant", Cvar::NONE, true);
 
+// bot default configurations
+Cvar::Range<Cvar::Cvar<int>> g_bot_default_skill( "g_bot_default_skill", "Default skill value bots will have when added", Cvar::NONE, 5, 1, 9 );
+
 // misc bot cvars
 Cvar::Cvar<bool> g_bot_attackStruct("g_bot_attackStruct", "whether bots target buildables", Cvar::NONE, true);
 Cvar::Cvar<float> g_bot_fov("g_bot_fov", "bots' \"field of view\"", Cvar::NONE, 125);
@@ -265,9 +268,6 @@ Cvar::Cvar<bool> g_bot_infinite_funds("g_bot_infinite_funds", "give bots unlimit
 
 static Cvar::Cvar<std::string> gamename("gamename", "game/mod identifier", Cvar::SERVERINFO | Cvar::ROM, GAME_VERSION);
 static Cvar::Cvar<std::string> gamedate("gamedate", "date the sgame was compiled", Cvar::ROM, __DATE__);
-
-// TODO why is this needed?
-static Cvar::Cvar<bool> g_mapConfigsLoaded("g_mapConfigsLoaded", "FOR INTERNAL USE", Cvar::NONE, false);
 
 void               CheckExitRules();
 static void        G_LogGameplayStats( int state );
@@ -380,16 +380,10 @@ void G_MapConfigs( const char *mapname )
 		return;
 	}
 
-	if ( g_mapConfigsLoaded.Get() )
-	{
-		return;
-	}
-
 	trap_SendConsoleCommand( va( "exec %s/default.cfg", Quote( g_mapConfigs.Get().c_str() ) ) );
 
 	trap_SendConsoleCommand( va( "exec %s/%s.cfg", Quote( g_mapConfigs.Get().c_str() ), Quote( mapname ) ) );
 
-	g_mapConfigsLoaded.Set(true);
 	trap_SendConsoleCommand( "maprestarted" );
 }
 
@@ -495,14 +489,14 @@ void G_InitGame( int levelTime, int randomSeed, bool inClient )
 	// load config files
 	BG_InitAllConfigs();
 
-	// we're done with g_mapConfigs, so reset this for the next map
-	g_mapConfigsLoaded.Set(false);
-
 	G_RegisterCommands();
 	G_admin_readconfig( nullptr );
 
 	// initialize all entities for this game
-	memset( g_entities, 0, MAX_GENTITIES * sizeof( g_entities[ 0 ] ) );
+	for ( int i=0; i < MAX_GENTITIES; i++ )
+	{
+		g_entities[i] = {};
+	}
 	level.gentities = g_entities;
 
 	// entity used as drop-in for unmigrated entities
@@ -1115,7 +1109,7 @@ and team change.
 ============
 */
 static Cvar::Cvar<std::string> slotTeams("P", "[serverinfo] client slot -> team", Cvar::SERVERINFO, "");
-static Cvar::Cvar<std::string> slotBots("P", "[serverinfo] client slot -> is bot", Cvar::SERVERINFO, "");
+static Cvar::Cvar<std::string> slotBots("B", "[serverinfo] client slot -> is bot", Cvar::SERVERINFO, "");
 void CalculateRanks()
 {
 	int  clientNum;

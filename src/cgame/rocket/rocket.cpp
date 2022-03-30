@@ -34,6 +34,7 @@ Maryland 20850 USA.
 
 // The basic interfaces for libRocket
 
+#include "common/Common.h"
 #include "rocket.h"
 #include <Rocket/Core/FileInterface.h>
 #include <Rocket/Core/SystemInterface.h>
@@ -75,7 +76,7 @@ public:
 	Rocket::Core::FileHandle Open( const Rocket::Core::String &filePath )
 	{
 		fileHandle_t fileHandle;
-		trap_FS_FOpenFile( filePath.CString(), &fileHandle, fsMode_t::FS_READ );
+		trap_FS_OpenPakFile( filePath.CString(), fileHandle );
 		return ( Rocket::Core::FileHandle )fileHandle;
 	}
 
@@ -290,11 +291,11 @@ void Rocket_RocketDebug_f()
 		{
 			Rocket::Debugger::SetContext( menuContext );
 		}
-		CG_SetKeyCatcher( trap_Key_GetCatcher() | KEYCATCH_UI );
+		CG_SetKeyCatcher( rocketInfo.keyCatcher | KEYCATCH_UI );
 	}
 	else
 	{
-		CG_SetKeyCatcher( trap_Key_GetCatcher() & ~KEYCATCH_UI );
+		CG_SetKeyCatcher( rocketInfo.keyCatcher & ~KEYCATCH_UI );
 	}
 }
 

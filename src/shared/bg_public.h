@@ -42,7 +42,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #define VOTE_TIME          30000 // 30 seconds before vote times out
 
-#define MINS_Z             -24
 #define DEAD_VIEWHEIGHT    4 // height from ground
 
 #define POWER_REFRESH_TIME 2000 // nextthink time for power checks
@@ -228,8 +227,15 @@ enum pmtype_t
 };
 
 // pmtype_t categories
-#define PM_Paralyzed( x ) ( ( x ) == PM_DEAD || ( x ) == PM_FREEZE || ( x ) == PM_INTERMISSION )
-#define PM_Live( x )      ( ( x ) == PM_NORMAL || ( x ) == PM_GRABBED )
+inline bool PM_Live( pmtype_t pmt )
+{
+	return pmt == PM_NORMAL || pmt == PM_GRABBED;
+}
+//TODO: deprecate
+inline bool PM_Live( int pmt )
+{
+	return PM_Live( static_cast<pmtype_t>( pmt ) );
+}
 
 enum weaponstate_t
 {
@@ -256,7 +262,7 @@ enum weaponstate_t
 #define PMF_FOLLOW         0x000800 // spectate following another player
 #define PMF_QUEUED         0x001000 // player is queued
 #define PMF_TIME_WALLJUMP  0x002000 // for limiting wall jumping
-#define PMF_CHARGE         0x004000 // keep track of pouncing
+#define PMF_CHARGE         0x004000 // keep track of pouncing (and trampling it seems?)
 #define PMF_WEAPON_SWITCH  0x008000 // force a weapon switch
 #define PMF_SPRINTHELD     0x010000
 
@@ -325,7 +331,7 @@ enum statIndex_t
   STAT_ITEMS,      // bitfield of all possible upgrades, probably only for humans.
   STAT_ACTIVEITEMS,
   STAT_WEAPON,     // current primary weapon. Works for humans and aliens. For aliens, is related to STAT_CLASS.
-  STAT_MAX_HEALTH, // health limit
+  STAT_MAX_HEALTH, // TODO: remove in 0.53
   STAT_CLASS,      // player class. Human's armor or alien's form. Do not use to guess team (which is done in some places), instead use PERS_TEAM
   STAT_STATE2,     // more client states
   STAT_STAMINA,    // humans: stamina
@@ -336,7 +342,6 @@ enum statIndex_t
   STAT_VIEWLOCK,   // direction to lock the view in
   STAT_PREDICTION, // predictions for current player action
   STAT_FUEL,       // humans: jetpack fuel
-  STAT_TAGSCORE    // tagging progress
 };
 
 #define SCA_WALLCLIMBER     0x00000001
@@ -1124,12 +1129,24 @@ enum meansOfDeath_t
   MOD_REPLACE
 };
 
-// TODO: move other button definitions into gamelogic
+// NOTE: BUTTON_TALK, BUTTON_WALKING and BUTTON_ANY are defined in daemon
+// Not sure which one of BTN_GESTURE or BTN_RALLY is "taunt"
 enum buttonNumber_t
 {
-  BUTTON_ATTACK3 = 9,
-  BUTTON_DECONSTRUCT = 13,
+	BTN_ATTACK       = 0,
+	BTN_TALK         = BUTTON_TALK, // = 1, // disables actions (defined by daemon)
+	BTN_USE_HOLDABLE = 2,
+	BTN_GESTURE      = 3,
+	BTN_WALKING      = BUTTON_WALKING, // = 4, (defined by daemon)
+	BTN_SPRINT       = 5,
+	BTN_ACTIVATE     = 6,
+	BTN_ANY          = BUTTON_ANY, // = 7, // if any key is pressed (defined by daemon)
+	BTN_ATTACK2      = 8,
+	BTN_ATTACK3      = 9,
+	BTN_DECONSTRUCT  = 13,
+	BTN_RALLY        = 14,
 };
+
 
 #define DEVOLVE_RETURN_FRACTION 0.9f
 
@@ -1525,8 +1542,68 @@ meansOfDeath_t            BG_MeansOfDeathByName( const char *name );
 void                      BG_InitAllConfigs();
 void                      BG_UnloadAllConfigs();
 
+/*
+ * This class is a simpler std::vector alternative that doesn't allocate
+ * and survives a memset(0) without damage, provided that you don't need to
+ * call destructors in such case.
+ *
+ * The purpose of this is to provide something in-between std::vector, which
+ * has fully dynamic and has unbounded size, and std::array that quite
+ * impractical as soon as you don't use it at its full capacity (it doesn't
+ * support an .append() or a clear() method, you can't use a C++11 style-loop
+ * to iterate over only the defined elements, etc.)
+ */
+template<typename T, size_t maximum_size_>
+class BoundedVector
+{
+private:
+	T array[maximum_size_];
+	size_t size_; // current size, should be <= capacity
+public:
+	BoundedVector() : size_(0) {}
+	BoundedVector(const BoundedVector<T, maximum_size_>& other)
+		: size_(other.size_)
+	{
+		for (size_t i = 0; i < other.size_; i++) {
+			array[i] = other.array[i];
+		}
+	}
+	BoundedVector<T, maximum_size_>& operator=(const BoundedVector<T, maximum_size_>& other) {
+		for (size_t i = 0; i < other.size_; i++) {
+			array[i] = other.array[i];
+		}
+		size_ = other.size_;
+		return *this;
+	}
+
+	T& operator[](size_t n) {
+		ASSERT_LT(n, size_);
+		return array[n];
+	}
+	Util::optional<T> pop_back() {
+		if (size_ == 0)
+			return {};
+		return std::move(array[--size_]);
+	}
+	void clear() {
+		while (pop_back()) {}
+	}
+	bool append(T elem) {
+		if (size_ == maximum_size_)
+			return false;
+		array[size_++] = std::move(elem);
+		return true;
+	}
+	size_t size() const { return size_; }
+	bool empty() const { return size_ == 0; }
+	T* begin() { return array; }
+	T* end()   { return array+size_; }
+	const T* begin() const { return array; }
+	const T* end()   const { return array+size_; }
+};
+
 // Parsers
-bool                  BG_ReadWholeFile( const char *filename, char *buffer, int size);
+bool                  BG_ReadWholeFile( const char *filename, char *buffer, size_t size);
 bool                  BG_CheckConfigVars();
 bool                  BG_NonSegModel( const char *filename );
 void                      BG_ParseBuildableAttributeFile( const char *filename, buildableAttributes_t *ba );
@@ -1593,7 +1670,7 @@ void     BG_EvaluateTrajectoryDelta( const trajectory_t *tr, int atTime, vec3_t 
 void     BG_AddPredictableEventToPlayerstate( int newEvent, int eventParm, playerState_t *ps );
 
 void     BG_PlayerStateToEntityState( playerState_t *ps, entityState_t *s, bool snap );
-void     BG_PlayerStateToEntityStateExtraPolate( playerState_t *ps, entityState_t *s, int time, bool snap );
+void     BG_PlayerStateToEntityStateExtraPolate( playerState_t *ps, entityState_t *s, int time );
 
 #define MAX_ARENAS      1024
 #define MAX_ARENAS_TEXT 8192
@@ -1601,9 +1678,13 @@ void     BG_PlayerStateToEntityStateExtraPolate( playerState_t *ps, entityState_
 float    atof_neg( char *token, bool allowNegative );
 int      atoi_neg( char *token, bool allowNegative );
 
-std::vector<buildable_t> BG_ParseBuildableList( const std::string& );
-std::vector<class_t> BG_ParseClassList( const std::string& );
-std::pair<std::vector<weapon_t>, std::vector<upgrade_t>> BG_ParseEquipmentList( const std::string& );
+BoundedVector<buildable_t, BA_NUM_BUILDABLES>
+		BG_ParseBuildableList( const std::string& );
+BoundedVector<class_t, PCL_NUM_CLASSES>
+		BG_ParseClassList( const std::string& );
+std::pair<BoundedVector<weapon_t,  WP_NUM_WEAPONS>,
+          BoundedVector<upgrade_t, UP_NUM_UPGRADES>>
+		BG_ParseEquipmentList( const std::string& );
 
 // You are not supposed to call these, these are meant to be used by
 // g_disabled* cvar callbacks
@@ -1617,7 +1698,7 @@ bool BG_UpgradeDisabled( int upgrade );
 bool BG_ClassDisabled( int class_ );
 bool BG_BuildableDisabled( int buildable );
 
-weapon_t BG_PrimaryWeapon( int stats[] );
+weapon_t BG_PrimaryWeapon( int const stats[] );
 
 // bg_voice.c
 #define MAX_VOICES             8

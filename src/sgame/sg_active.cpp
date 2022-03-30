@@ -27,6 +27,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "sg_local.h"
 #include "Entities.h"
 #include "CBSE.h"
+#include "sg_cm_world.h"
 
 bool ClientInactivityTimer( gentity_t *ent, bool active );
 
@@ -521,11 +522,11 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd )
 	usercmdCopyButtons( client->oldbuttons, client->buttons );
 	usercmdCopyButtons( client->buttons, ucmd->buttons );
 
-	attack1 = usercmdButtonPressed( client->buttons, BUTTON_ATTACK ) &&
-	          !usercmdButtonPressed( client->oldbuttons, BUTTON_ATTACK );
+	attack1 = usercmdButtonPressed( client->buttons, BTN_ATTACK ) &&
+	          !usercmdButtonPressed( client->oldbuttons, BTN_ATTACK );
 
-	attackReleased = !usercmdButtonPressed( client->buttons, BUTTON_ATTACK ) &&
-		  usercmdButtonPressed( client->oldbuttons, BUTTON_ATTACK );
+	attackReleased = !usercmdButtonPressed( client->buttons, BTN_ATTACK ) &&
+		  usercmdButtonPressed( client->oldbuttons, BTN_ATTACK );
 
 	//if bot
 	if( ent->r.svFlags & SVF_BOT ) {
@@ -648,7 +649,7 @@ void SpectatorThink( gentity_t *ent, usercmd_t *ucmd )
 		pm.cmd = *ucmd;
 		pm.tracemask = MASK_DEADSOLID; // spectators can fly through bodies
 		pm.trace = trap_Trace;
-		pm.pointcontents = trap_PointContents;
+		pm.pointcontents = G_CM_PointContents;
 
 		// Perform a pmove
 		Pmove( &pm );
@@ -695,7 +696,7 @@ bool ClientInactivityTimer( gentity_t *ent, bool active )
 	          client->pers.cmd.forwardmove ||
 	          client->pers.cmd.rightmove ||
 	          client->pers.cmd.upmove ||
-	          usercmdButtonPressed( client->pers.cmd.buttons, BUTTON_ATTACK ) )
+	          usercmdButtonPressed( client->pers.cmd.buttons, BTN_ATTACK ) )
 	{
 		client->inactivityTime = level.time + inactivityTime * 1000;
 		client->inactivityWarning = false;
@@ -839,8 +840,6 @@ static void BeaconAutoTag( gentity_t *self, int timePassed )
 	traceEnt = Beacon::TagTrace( viewOrigin, end, self->s.number, MASK_SHOT, team, true );
 	G_UnlaggedOff( );
 
-	client->ps.stats[ STAT_TAGSCORE ] = 0;
-
 	for ( target = nullptr; ( target = G_IterateEntities( target ) ); )
 	{
 		// Tag entity directly hit and entities in human radar range, make sure the latter are also
@@ -859,9 +858,6 @@ static void BeaconAutoTag( gentity_t *self, int timePassed )
 
 			if( target->tagScore > 1000 )
 				Beacon::Tag( target, team, ( target->s.eType == entityType_t::ET_BUILDABLE ) );
-
-			client->ps.stats[ STAT_TAGSCORE ] = Math::Clamp(
-				target->tagScore, client->ps.stats[ STAT_TAGSCORE ], 1000 );
 		}
 	}
 }
@@ -1110,7 +1106,7 @@ void ClientIntermissionThink( gclient_t *client )
 	usercmdCopyButtons( client->oldbuttons, client->buttons );
 	usercmdCopyButtons( client->buttons, client->pers.cmd.buttons );
 
-	if ( usercmdButtonPressed( client->buttons, BUTTON_ATTACK ) &&
+	if ( usercmdButtonPressed( client->buttons, BTN_ATTACK ) &&
 	     usercmdButtonsDiffer( client->oldbuttons, client->buttons ) )
 	{
 		client->readyToExit = 1;
@@ -2024,7 +2020,7 @@ void ClientThink_real( gentity_t *self )
 	if ( self->flags & FL_FORCE_GESTURE )
 	{
 		self->flags &= ~FL_FORCE_GESTURE;
-		usercmdPressButton( client->pers.cmd.buttons, BUTTON_GESTURE );
+		usercmdPressButton( client->pers.cmd.buttons, BTN_GESTURE );
 	}
 
 	// clear fall impact velocity before every pmove
@@ -2044,7 +2040,7 @@ void ClientThink_real( gentity_t *self )
 	}
 
 	pm.trace          = trap_Trace;
-	pm.pointcontents  = trap_PointContents;
+	pm.pointcontents  = G_CM_PointContents;
 	pm.debugLevel     = g_debugMove.Get();
 	pm.noFootsteps    = 0;
 	pm.pmove_fixed    = level.pmoveParams.fixed || client->pers.pmoveFixed;
@@ -2071,7 +2067,7 @@ void ClientThink_real( gentity_t *self )
 
 	if ( g_smoothClients.Get() )
 	{
-		BG_PlayerStateToEntityStateExtraPolate( &client->ps, &self->s, client->ps.commandTime, true );
+		BG_PlayerStateToEntityStateExtraPolate( &client->ps, &self->s, client->ps.commandTime );
 	}
 	else
 	{
@@ -2173,8 +2169,8 @@ void ClientThink_real( gentity_t *self )
 	usercmdCopyButtons( client->buttons, ucmd->buttons );
 	usercmdLatchButtons( client->latched_buttons, client->buttons, client->oldbuttons );
 
-	if ( usercmdButtonPressed( client->buttons, BUTTON_ACTIVATE ) &&
-	     !usercmdButtonPressed( client->oldbuttons, BUTTON_ACTIVATE ) &&
+	if ( usercmdButtonPressed( client->buttons, BTN_ACTIVATE ) &&
+	     !usercmdButtonPressed( client->oldbuttons, BTN_ACTIVATE ) &&
 	     Entities::IsAlive( self ) )
 	{
 		trace_t   trace;
@@ -2190,7 +2186,8 @@ void ClientThink_real( gentity_t *self )
 
 		if ( ent && ent->use &&
 		     ( !ent->buildableTeam   || ent->buildableTeam   == client->pers.team ) &&
-		     ( !ent->conditions.team || ent->conditions.team == client->pers.team ) )
+		     ( !ent->conditions.team || ent->conditions.team == client->pers.team ) &&
+		     Distance( self->s.origin, ent->s.origin ) < ENTITY_USE_RANGE )
 		{
 			if ( g_debugEntities.Get() > 1 )
 			{
@@ -2325,7 +2322,7 @@ void ClientEndFrame( gentity_t *ent )
 	// set the latest infor
 	if ( g_smoothClients.Get() )
 	{
-		BG_PlayerStateToEntityStateExtraPolate( &ent->client->ps, &ent->s, ent->client->ps.commandTime, true );
+		BG_PlayerStateToEntityStateExtraPolate( &ent->client->ps, &ent->s, ent->client->ps.commandTime );
 	}
 	else
 	{

@@ -134,13 +134,13 @@ static const char *CG_KeyNameForCommand( const char *command )
 CG_BuildableInRange
 ===============
 */
-static entityState_t *CG_BuildableInRange( playerState_t *ps, float *healthFraction )
+static entityState_t *CG_BuildableInRange( playerState_t *ps )
 {
 	vec3_t        view, point;
 	trace_t       trace;
 
 	AngleVectors( cg.refdefViewAngles, view, nullptr, nullptr );
-	VectorMA( cg.refdef.vieworg, 64, view, point );
+	VectorMA( cg.refdef.vieworg, ENTITY_USE_RANGE - 0.2f, view, point );
 	CG_Trace( &trace, cg.refdef.vieworg, nullptr, nullptr, point, ps->clientNum, MASK_SHOT, 0 );
 
 	entityState_t &es = cg_entities[ trace.entityNum ].currentState;
@@ -150,14 +150,10 @@ static entityState_t *CG_BuildableInRange( playerState_t *ps, float *healthFract
 		return nullptr;
 	}
 
-	if ( healthFraction )
-	{
-		float health = static_cast<float>(CG_Health(es));
-		*healthFraction = health / BG_Buildable( es.modelindex )->health;
-	}
-
 	return &es;
 }
+
+#define COLOR_ALARM "^8" // Orange
 
 /*
 ===============
@@ -186,7 +182,7 @@ static void CG_BuilderText( char *text, playerState_t *ps )
 		              CG_KeyNameForCommand( "+attack" ) ) );
 	}
 
-	if ( ( es = CG_BuildableInRange( ps, nullptr ) ) )
+	if ( ( es = CG_BuildableInRange( ps ) ) )
 	{
 		const char *key = CG_KeyNameForCommand( "+deconstruct" );
 
@@ -225,7 +221,7 @@ static void CG_AlienBuilderText( char *text, playerState_t *ps )
 	if ( ps->stats[ STAT_CLASS ] == PCL_ALIEN_BUILDER0_UPG )
 	{
 		Q_strcat( text, MAX_TUTORIAL_TEXT,
-		          va( _( "Press %s to spit\n" ),
+		          va( _( "Press %s to spit. Spits can slow humans and remove fire.\n" ),
 		              CG_KeyNameForCommand( "+attack3" ) ) );
 
 		Q_strcat( text, MAX_TUTORIAL_TEXT,
@@ -362,6 +358,7 @@ static void CG_HumanText( char *text, playerState_t *ps )
 			case WP_CHAINGUN:
 			case WP_SHOTGUN:
 			case WP_FLAMER:
+				Q_strcat( text, MAX_TUTORIAL_TEXT, COLOR_ALARM );
 				Q_strcat( text, MAX_TUTORIAL_TEXT,
 				          _( "Find an Armoury for more ammo\n" ) );
 				break;
@@ -370,6 +367,7 @@ static void CG_HumanText( char *text, playerState_t *ps )
 			case WP_PULSE_RIFLE:
 			case WP_MASS_DRIVER:
 			case WP_LUCIFER_CANNON:
+				Q_strcat( text, MAX_TUTORIAL_TEXT, COLOR_ALARM );
 				Q_strcat( text, MAX_TUTORIAL_TEXT,
 				          _( "Find an Armoury or Reactor for more ammo\n" ) );
 				break;
@@ -470,6 +468,7 @@ static void CG_HumanText( char *text, playerState_t *ps )
 	if ( ps->stats[ STAT_HEALTH ] <= 35 &&
 	     BG_InventoryContainsUpgrade( UP_MEDKIT, ps->stats ) )
 	{
+		Q_strcat( text, MAX_TUTORIAL_TEXT, COLOR_ALARM );
 		Q_strcat( text, MAX_TUTORIAL_TEXT,
 		          va( _( "Press %s to use your %s\n" ),
 		              CG_KeyNameForCommand( "itemact medkit" ),

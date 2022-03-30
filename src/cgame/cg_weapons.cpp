@@ -26,6 +26,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 // cg_weapons.c -- events and effects dealing with weapons
 
+#include "common/FileSystem.h"
 #include "cg_local.h"
 
 static refSkeleton_t gunSkeleton;
@@ -84,31 +85,23 @@ Load custom crosshairs specified by the user
 static void CG_LoadCustomCrosshairs()
 {
 	const char         *text_p, *token;
-	char         text[ 20000 ];
-	int          len;
-	fileHandle_t f;
 	weapon_t     weapon;
 
-	len = trap_FS_FOpenFile( cg_crosshairFile.Get().c_str(), &f, fsMode_t::FS_READ );
-
-	if ( len < 0 )
+	std::string filename = cg_crosshairFile.Get();
+	if ( filename.empty() )
 	{
 		return;
 	}
-
-	if ( len == 0 || len + 1 >= (int) sizeof( text ) )
+	std::error_code err;
+	std::string text = FS::PakPath::ReadFile( filename, err );
+	if ( err )
 	{
-		Log::Warn( len == 0 ? "File %s is empty" : "File %s is too long", cg_crosshairFile.Get() );
-		trap_FS_FCloseFile( f );
+		Log::Warn( "couldn't read custom crosshair file '%s': %s", filename, err.message() );
 		return;
 	}
-
-	trap_FS_Read( text, len, f );
-	text[ len ] = 0;
-	trap_FS_FCloseFile( f );
 
 	// parse the text
-	text_p = text;
+	text_p = text.c_str();
 
 	while ( 1 )
 	{
@@ -229,37 +222,28 @@ Reads the animation.cfg for weapons
 static bool CG_ParseWeaponAnimationFile( const char *filename, weaponInfo_t *wi )
 {
 	const char         *text_p;
-	int          len;
 	int          i;
 	char         *token;
 	float        fps;
-	char         text[ 20000 ];
-	fileHandle_t f;
 	animation_t  *animations;
 
 	animations = wi->animations;
 
-	// load the file
-	len = trap_FS_FOpenFile( filename, &f, fsMode_t::FS_READ );
-
-	if ( len < 0 )
+	std::error_code err;
+	std::string text = FS::PakPath::ReadFile( filename, err );
+	if ( err )
 	{
+		const std::error_code notFound(Util::ordinal(FS::filesystem_error::no_such_file), FS::filesystem_category());
+		// Some weapons e.g. dretch attack actually don't have animations
+		if ( err != notFound )
+		{
+			Log::Warn( "couldn't read weapon animation file '%s': %s", filename, err.message() );
+		}
 		return false;
 	}
-
-	if ( len == 0 || len + 1 >= (int) sizeof( text ) )
-	{
-		Log::Warn( len == 0 ? "File %s is empty" : "File %s is too long", filename );
-		trap_FS_FCloseFile( f );
-		return false;
-	}
-
-	trap_FS_Read( text, len, f );
-	text[ len ] = 0;
-	trap_FS_FCloseFile( f );
 
 	// parse the text
-	text_p = text;
+	text_p = text.c_str();
 
 	for ( i = WANIM_NONE + 1; i < MAX_WEAPON_ANIMATIONS; i++ )
 	{
@@ -617,37 +601,23 @@ Parses a configuration file describing a weapon
 static bool CG_ParseWeaponFile( const char *filename, int weapon, weaponInfo_t *wi )
 {
 	const char         *text_p;
-	int          len;
 	char         *token;
-	char         text[ 20000 ];
-	fileHandle_t f;
 	weaponMode_t weaponMode = WPM_NONE;
 	char         token2[ MAX_QPATH ];
 	int          i;
 
-	// load the file
-	len = trap_FS_FOpenFile( filename, &f, fsMode_t::FS_READ );
-
-	if ( len < 0 )
+	std::error_code err;
+	std::string text = FS::PakPath::ReadFile( filename, err );
+	if ( err )
 	{
+		Log::Warn( "couldn't read weapon configuration file '%s': %s", filename, err.message() );
 		return false;
 	}
-
-	if ( len == 0 || len + 1 >= (int) sizeof( text ) )
-	{
-		trap_FS_FCloseFile( f );
-		Log::Warn( len == 0 ? "File %s is empty" : "File %s is too long", filename );
-		return false;
-	}
-
-	trap_FS_Read( text, len, f );
-	text[ len ] = 0;
-	trap_FS_FCloseFile( f );
-
-	wi->scale = 1.0f;
 
 	// parse the text
-	text_p = text;
+	text_p = text.c_str();
+
+	wi->scale = 1.0f;
 
 	// read optional parameters
 	while ( 1 )
@@ -705,7 +675,7 @@ static bool CG_ParseWeaponFile( const char *filename, int weapon, weaponInfo_t *
 
 			COM_StripExtension( token, token2 );
 
-			if ( CG_FileExists( va( "%s_view.iqm", token2 ) ) &&
+			if ( FS::PakPath::FileExists( va( "%s_view.iqm", token2 ) ) &&
 			     ( wi->weaponModel = trap_R_RegisterModel( va( "%s_view.iqm", token2 ) ) ) )
 			{
 				wi->md5 = true;
@@ -790,7 +760,7 @@ static bool CG_ParseWeaponFile( const char *filename, int weapon, weaponInfo_t *
 						break;
 				}
 			}
-			else if ( CG_FileExists( va( "%s_view.md5mesh", token2 ) ) &&
+			else if ( FS::PakPath::FileExists( va( "%s_view.md5mesh", token2 ) ) &&
 			          ( wi->weaponModel = trap_R_RegisterModel( va( "%s_view.md5mesh", token2 ) ) ) )
 			{
 				wi->md5 = true;
@@ -887,21 +857,21 @@ static bool CG_ParseWeaponFile( const char *filename, int weapon, weaponInfo_t *
 
 			COM_StripExtension( token, path );
 			strcat( path, "_flash.md3" );
-			if ( CG_FileExists( path ) )
+			if ( FS::PakPath::FileExists( path ) )
 			{
 				wi->flashModel = trap_R_RegisterModel( path );
 			}
 
 			COM_StripExtension( token, path );
 			strcat( path, "_barrel.md3" );
-			if ( CG_FileExists( path ) )
+			if ( FS::PakPath::FileExists( path ) )
 			{
 				wi->barrelModel = trap_R_RegisterModel( path );
 			}
 
 			COM_StripExtension( token, path );
 			strcat( path, "_hand.md3" );
-			if ( CG_FileExists( path ) )
+			if ( FS::PakPath::FileExists( path ) )
 			{
 				wi->handsModel = trap_R_RegisterModel( path );
 			}
@@ -929,14 +899,14 @@ static bool CG_ParseWeaponFile( const char *filename, int weapon, weaponInfo_t *
 
 			COM_StripExtension( token, path );
 			strcat( path, "_flash.md3" );
-			if ( CG_FileExists( path ) )
+			if ( FS::PakPath::FileExists( path ) )
 			{
 				wi->flashModel3rdPerson = trap_R_RegisterModel( path );
 			}
 
 			COM_StripExtension( token, path );
 			strcat( path, "_barrel.md3" );
-			if ( CG_FileExists( path ) )
+			if ( FS::PakPath::FileExists( path ) )
 			{
 			    wi->barrelModel3rdPerson = trap_R_RegisterModel( path );
 			}
@@ -1287,8 +1257,8 @@ WeaponOffsets
 */
 WeaponOffsets WeaponOffsets::operator+=( WeaponOffsets B )
 {
-	bob += B.bob;
-	angvel += B.angvel;
+	VectorAdd( bob, B.bob, bob );
+	VectorAdd( angvel, B.angvel, angvel );
 
 	return *this;
 }
@@ -1297,8 +1267,8 @@ WeaponOffsets WeaponOffsets::operator*( float B )
 {
 	WeaponOffsets R;
 
-	R.bob = bob * B;
-	R.angvel = angvel * B;
+	VectorScale( bob, B, R.bob );
+	VectorScale( angvel, B, R.angvel );
 
 	return R;
 }
@@ -1311,87 +1281,54 @@ CG_CalculateWeaponPosition
 */
 static void CG_CalculateWeaponPosition( vec3_t out_origin, vec3_t out_angles )
 {
-	const float
-		limitX = 1.5f,
-		scaleX = -2e-3,
-		limitY = 1.5f,
-		scaleY = 2e-3;
-	Vec3 origin, angles, right, up;
-	float        scale;
 	//weaponInfo_t *weapon = cg_weapons + cg.predictedPlayerState.weapon;
 	Filter<WeaponOffsets> &filter = cg.weaponOffsetsFilter;
 	WeaponOffsets offsets;
-
-	origin = Vec3::Load( cg.refdef.vieworg );
-	angles = Vec3::Load( cg.refdefViewAngles );
-	right = Vec3::Load( cg.refdef.viewaxis[ 1 ] );
-	up = Vec3::Load( cg.refdef.viewaxis[ 2 ] );
-
-	// on odd legs, invert some angles
-	scale = ( cg.bobcycle & 1 ? -1 : 1 ) * cg.xyspeed;
 
 	filter.SetWidth( 350 );
 
 	// bobbing
 	if( BG_Class( cg.predictedPlayerState.stats[ STAT_CLASS ] )->bob )
 	{
-		offsets.bob = Vec3(
+		// on odd legs, invert some angles
+		float scale = ( cg.bobcycle & 1 ? -1 : 1 ) * cg.xyspeed;
+		VectorSet( offsets.bob,
 			cg.xyspeed * cg.bobfracsin * 0.005f,
 			scale * cg.bobfracsin * 0.005f,
 			scale * cg.bobfracsin * 0.01f );
 	}
 
 	// weapon inertia
-	offsets.angles = angles;
-	offsets.angvel = {};
+	vec3_t angles;
+	VectorCopy( cg.refdefViewAngles, angles );
+	VectorCopy( cg.refdefViewAngles, offsets.angles );
+	VectorClear( offsets.angvel );
 
 	if( !filter.IsEmpty( ) )
 	{
 		auto last = filter.Last( );
-		float dt;
+		float dt = ( cg.time - last.first ) * 0.001f;
 
-		dt = ( cg.time - last.first ) * 0.001f;
-
-		offsets.angvel = angles.Apply2( AngleDelta, last.second.angles ) / dt;
+		offsets.angvel[ 0 ] = AngleNormalize180( angles[ 0 ] - last.second.angles[ 0 ] ) / dt;
+		offsets.angvel[ 1 ] = AngleNormalize180( angles[ 1 ] - last.second.angles[ 1 ] ) / dt;
+		offsets.angvel[ 2 ] = AngleNormalize180( angles[ 2 ] - last.second.angles[ 2 ] ) / dt;
 	}
 
 	// accumulate and get the smoothed out values
-
 	filter.Accumulate( cg.time, offsets );
 	offsets = filter.GaussianMA( cg.time );
 
 	// offset angles and origin
+	const float limitX = 1.5f;
+	const float scaleX = -2e-3;
+	const float limitY = 1.5f;
+	const float scaleY = 2e-3;
 
-	angles += offsets.bob;
-	origin += up * atanf( offsets.angvel[ 0 ] * scaleY ) * limitY;
-	origin += right * atanf( offsets.angvel[ 1 ] * scaleX ) * limitX;
+	VectorAdd( angles, offsets.bob, angles );
+	VectorMA( cg.refdef.vieworg, atanf( offsets.angvel[ 0 ] * scaleY ) * limitY, cg.refdef.viewaxis[ 2 ], out_origin );
+	VectorMA( out_origin, atanf( offsets.angvel[ 1 ] * scaleX ) * limitX, cg.refdef.viewaxis[ 1 ], out_origin );
 
-	// FIXME: is this of any use?
-	/*if( !weapon->md5 && !weapon->noDrift )
-	{
-		int delta;
-		float fracsin;
-
-		delta = cg.time - cg.landTime;
-
-		if ( delta < LAND_DEFLECT_TIME )
-		{
-			origin += Vec3( 0, 0, cg.landChange * 0.25f * delta / LAND_DEFLECT_TIME );
-		}
-		else if ( delta < LAND_DEFLECT_TIME + LAND_RETURN_TIME )
-		{
-			origin += Vec3( 0, 0, cg.landChange * 0.25f *
-			          ( LAND_DEFLECT_TIME + LAND_RETURN_TIME - delta ) / LAND_RETURN_TIME );
-		}
-
-		// idle drift
-		scale = cg.xyspeed + 40;
-		fracsin = sinf( cg.time * 0.001f );
-		angles += Vec3( scale * fracsin * 0.01f );
-	}*/
-
-	origin.Store( out_origin );
-	angles.Store( out_angles );
+	VectorCopy( angles, out_angles );
 }
 
 /*
